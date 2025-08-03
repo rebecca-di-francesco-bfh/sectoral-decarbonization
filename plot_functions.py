@@ -143,16 +143,35 @@ def plot_origin_vs_opt_weights_comparison(w_b_vec, w_opt, stock_labels, sector_n
         plt.tight_layout()
         plt.show()
 
-    # Plot 2: Side-by-Side Bar Plot
     if weight_comp_bool:
+        # Sort by descending benchmark weights
+        sorted_indices = np.argsort(w_b_vec)[::-1]
+        w_b_vec_sorted = w_b_vec[sorted_indices]
+        w_opt_sorted = w_opt[sorted_indices]
+        stock_labels_sorted = [stock_labels[i] for i in sorted_indices]
+
+        x = np.arange(len(stock_labels))
         plt.figure(figsize=(12, 5))
-        plt.bar(x - width/2, w_b_vec, width, label='Benchmark')
-        plt.bar(x + width/2, w_opt, width, label='Optimized')
-        plt.xticks(x, stock_labels, rotation=45)
+        plt.bar(x - width/2, w_b_vec_sorted, width, label='Benchmark')
+        plt.bar(x + width/2, w_opt_sorted, width, label='Optimized')
+        plt.xticks(x, stock_labels_sorted, rotation=45)
         plt.ylabel("Weight")
         plt.title(f"{sector_name or 'Sector'} – Benchmark vs Optimized Weights", weight='bold')
         plt.legend()
         plt.grid(True, axis='y', linestyle=':', alpha=0.5)
+
+        # Compute HHI (Concentration Score)
+        hhi_bench = np.sum(w_b_vec ** 2)
+        hhi_opt = np.sum(w_opt ** 2)
+
+        # Annotate scores on the plot
+        plt.text(0.01, 0.95, f'Benchmark Concentration: {hhi_bench:.3f}', transform=plt.gca().transAxes,
+                 fontsize=10, verticalalignment='top', color='black',
+                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+        plt.text(0.01, 0.85, f'Optimized Concentration: {hhi_opt:.3f}', transform=plt.gca().transAxes,
+                 fontsize=10, verticalalignment='top', color='black',
+                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.7))
+
         plt.tight_layout()
         plt.show()
 
