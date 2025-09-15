@@ -16,6 +16,9 @@ from sklearn.covariance import LedoitWolf
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.express as px
+import pickle
+
+
 
 # ---------------------------
 # Config Streamlit
@@ -39,10 +42,18 @@ st.caption(
     "Select a sector and a tracking error level to compare weights, carbon intensity, and concentration."
 )
 
+
 # ---------------------------
 # Utility functions
 # ---------------------------
+@st.cache_data
+def load_flex_artifacts():
+    with open("Data/sector_bands.pkl", "rb") as f:
+        eps_bands_by_sector = pickle.load(f)     # dict[str -> DataFrame(symbol, w_min, w_max, bandwidth)]
+    sector_flex_summary = pd.read_excel("Data/l2_bandwith_turnover.xlsx")    
+    return eps_bands_by_sector, sector_flex_summary
 
+eps_bands_by_sector, sector_flex_summary = load_flex_artifacts()
 def compute_hhi(weights: np.ndarray) -> float:
     """Herfindahl-Hirschman Index (sum of squared weights)."""
     w = np.asarray(weights).flatten()
@@ -424,7 +435,7 @@ fig_frontier.update_layout(
 )
 st.plotly_chart(fig_frontier, use_container_width=True)
 
-st.markdown(f'<div class="sub-title">Room for Maneuver</div>', unsafe_allow_html=True)
+st.markdown("### Room for Maneuver")
 
 # ---- Compute Room-for-Maneuver KPIs from the frontier ----
 import math
@@ -477,6 +488,240 @@ k2.metric("Elasticity @ 2% TE", f"{elasticity_2pct:.2f}")
 k3.metric("AUC ≤ 5% TE", f"{auc_5pct:,.3f}")
 k4.metric("Max Cut @ 5% TE", f"{max_cut_5pct:.1f}%")
 k5.metric("Min TE for 50% Cut", min_te_50_label)  # "Not reached" or "235 bps"
+
+st.markdown("### Flexibility (ε-bands & L2)")
+
+# Pick the currently selected sector_name from your sidebar
+_flex_row = sector_flex_summary.loc[sector_flex_summary["Sector"] == sector_name].iloc[0]
+
+colA, colB, colC, colD = st.columns(4)  # now only 4 columns
+colA.metric("L2 lower bound (same obj.)", f'{_flex_row["L2_lower_bound_same_obj"]:.3f}')
+colB.metric("ε-band Avg / Med", f'{_flex_row["Avg_bandwidth"]:.2%} / {_flex_row["Median_bandwidth"]:.2%}')
+colC.metric("Max ε-band", f'{_flex_row["Max_bandwidth"]:.2%}')
+colD.metric("% w_min = 0", f'{_flex_row["Pct_wmin_zero"]:.1f}%')
+
+
+
+bands_df = eps_bands_by_sector[sector_name].copy()
+bands_df = bands_df.sort_values("bandwidth", ascending=False)
+
+st.markdown("#### Top flexible names (by ε-bandwidth)")
+st.dataframe(bands_df.head(15), use_container_width=True)
+
+
+st.markdown("### Sensitivity")
+
+import pickle
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# -----------------------------
+# Load sensitivity KPIs
+# -----------------------------
+import pickle
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import streamlit as st
+
+# ================================
+# Load sensitivity KPIs
+# ================================
+with open("Data/sensitivity_kpis.pkl", "rb") as f:
+    sensitivity_kpis = pickle.load(f)
+
+# Convert to DataFrame
+df_sens = pd.DataFrame(sensitivity_kpis).T
+
+# Add misalignment (1 - cosine similarity, in %)
+df_sens["Misalignment_pct"] = (1 - df_sens["Median_Cosine"]) * 100
+
+# Normalize metrics
+def normalize_metric(series):
+    return (series - series.min()) / (series.max() - series.min())
+
+metrics = [
+    "Median_Turnover_pct",
+    "Misalignment_pct",
+    "P95_CarbonLoss_pp",
+    "P95_TE_Drift_bps"
+]
+
+for col in metrics:
+    df_sens[col + "_norm"] = normalize_metric(df_sens[col])
+
+# ================================
+# Radar chart function
+# ================================
+def plot_radar(sector_name):
+    values = df_sens.loc[sector_name, [m + "_norm" for m in metrics]].tolist()
+    labels = ["Turnover", "Misalignment", "Carbon Loss", "TE Drift"]
+
+    # Close loop
+    values += values[:1]
+    angles = np.linspace(0, 2*np.pi, len(labels) + 1)
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(6, 6), subplot_kw=dict(polar=True))
+    ax.plot(angles, values, linewidth=2, label=sector_name)
+    ax.fill(angles, values, alpha=0.25)
+
+    ax.set_xticks(angles[:-1])
+    ax.set_xticklabels(labels)
+    ax.set_title(f"Sensitivity Radar — {sector_name}")
+    ax.set_yticklabels([])  # hide radial scale
+    ax.legend(loc="upper right", bbox_to_anchor=(1.2, 1.1))
+
+    return fig
+
+# ================================
+# Streamlit integration
+# ================================
+st.markdown("### Sensitivity Radar Chart")
+
+
+
+# Plot
+fig = plot_radar(sector_name)
+st.pyplot(fig)
+
+# Show raw sensitivity metrics
+st.markdown("**Underlying Sensitivity Metrics**")
+st.dataframe(df_sens.loc[[sector_name], metrics])
+
+
+decarb_sector_returns = {}
+
+
+monthly_returns_2018_2020 = pd.read_excel("Data/monthly_returns_2018_2020.xlsx")
+monthly_returns_2018_2020.set_index('Date', inplace=True)
+def compute_fixed_weight_returns(returns_df, weights, stock_labels):
+    """
+    Compute fixed-weight portfolio returns (decarbonised portfolio).
+    
+    Args:
+        returns_df: DataFrame of monthly returns
+        weights: np.array of optimised weights
+        stock_labels: list or Index of stock tickers
+
+    Returns:
+        Series of portfolio returns over time
+    """
+    sector_returns = returns_df[stock_labels]
+    portfolio_returns = sector_returns.dot(weights)
+    return portfolio_returns
+
+exclude_list = ['DAY', 'MRNA', 'DOW', 'FOXA', 'CARR', 'OTIS', 'CTVA']
+
+# Copy to avoid modifying in place
+adjusted_portfolios = {}
+
+
+stock_labels =result['stock_labels']
+w_b = result['w_b_vec']
+w_opt =result['w_opt']
+    
+if isinstance(stock_labels, np.ndarray):
+    keep_mask = ~np.isin(stock_labels, exclude_list)
+else:  # pandas Index or Series
+    keep_mask = ~stock_labels.isin(exclude_list)
+
+
+# Apply mask to weights and stock_labels
+w_b_new = w_b[keep_mask]
+w_opt_new = w_opt[keep_mask]
+labels_new = stock_labels[keep_mask]
+    
+# Re-normalize weights to sum to 1
+w_b_new /= w_b_new.sum()
+w_opt_new /= w_opt_new.sum()
+
+# Store in new dictionary
+adjusted_portfolio= {
+    'w_b_vec': w_b_new,
+    'w_opt': w_opt_new,
+    'stock_labels': labels_new
+}
+
+decarb_sector_returns = compute_fixed_weight_returns(
+    monthly_returns_2018_2020,
+    weights=adjusted_portfolio['w_opt'],
+    stock_labels=adjusted_portfolio["stock_labels"]
+)
+
+
+
+with open('Data/buy_and_hold_sector_returns.pkl', 'rb') as f:
+    buy_and_hold_sector_returns = pickle.load(f)
+
+r_b = buy_and_hold_sector_returns[sector_name]
+r_d = decarb_sector_returns
+print(r_b)
+print(r_d)
+# Align indices
+common_index = r_b.index.intersection(r_d.index)
+r_b = r_b.loc[common_index]
+r_d = r_d.loc[common_index]
+
+df = pd.DataFrame({'r_b': r_b, 'r_d': r_d})
+df['active_return'] = df['r_d'] - df['r_b']
+six_month_windows = df.resample('6ME')
+results = []
+
+for _, window in six_month_windows:
+    if len(window) >= 3:  # require at least 3 months in a window
+
+        # Active return series
+        active = window['active_return']
+
+        # --- Tracking Error ---
+        te_6m = active.std()
+        te_ann = te_6m * np.sqrt(12)  # annualize from monthly std
+
+        # --- Average returns ---
+        mean_ret_ann = (1 + window['r_d']).prod()**(12/len(window)) - 1  # decarb portfolio
+        mean_bench_ann = (1 + window['r_b']).prod()**(12/len(window)) - 1  # benchmark
+        mean_active_ann = (1 + active).prod()**(12/len(window)) - 1  # geometric mean active return (annualized)
+
+        # --- Volatility (annualized) ---
+        vol_ann = window['r_d'].std() * np.sqrt(12)
+
+        # --- Sharpe ratio ---
+        sharpe = mean_ret_ann / vol_ann if vol_ann > 0 else np.nan
+
+        # --- Expected shortfall (5%) ---
+        es_5 = active[active <= np.quantile(active, 0.05)].mean()
+
+        results.append({
+            "TE_ann": te_ann,
+            "MeanReturn_ann": mean_ret_ann,
+            "MeanBench_ann": mean_bench_ann,
+            "GeoActive_ann": mean_active_ann,
+            "Vol_ann": vol_ann,
+            "Sharpe": sharpe,
+            "ES_5": es_5
+        })
+
+# Collect into DataFrame
+window_stats = pd.DataFrame(results)
+
+# Compute dashboard averages across windows
+dashboard_metrics = window_stats.mean()
+
+st.markdown("### Robustness")
+# === KPIs ===
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Avg TE (bps)", f"{dashboard_metrics['TE_ann']*1e4:.1f}")
+    st.metric("Avg Volatility", f"{dashboard_metrics['Vol_ann']:.2%}")
+with col2:
+    st.metric("Avg Return", f"{dashboard_metrics['MeanReturn_ann']:.2%}")
+    st.metric("Avg Sharpe", f"{dashboard_metrics['Sharpe']:.2f}")
+with col3:
+    st.metric("Avg Active (Geo)", f"{dashboard_metrics['GeoActive_ann']:.2%}")
+    st.metric("Avg ES (5%)", f"{dashboard_metrics['ES_5']:.2%}")
+
 
 # ---------------------------
 # Weights: benchmark vs optimized
