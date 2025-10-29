@@ -14,6 +14,7 @@ import numpy as np
 from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
+import miceforest as mf
 
 
 class DatasetCreator:
@@ -37,6 +38,8 @@ class DatasetCreator:
         self.adj_price_file = self.data_dir / "yahoo" / f"adj_price_yahoo_comp_{period}.xlsx"
         self.wiki_file = self.data_dir / "wiki" / "symbol_wiki.xlsx"
         self.patch_file = self.data_dir / "scope_emissions_patch.csv"
+        self.delisted_revenue_file = self.data_dir / "delisted_companies_revenues.csv"
+        self.missing_prices_file = self.data_dir / "stocks_with_missing_prices" / f"stocks_with_missing_prices_{period}.xlsx"
 
         # Output paths
         self.output_dir = self.data_dir / "datasets"
@@ -91,7 +94,99 @@ class DatasetCreator:
 
         print(f"  Dataset shape: {df.shape}")
         print(f"  Companies with GICS sector: {df['GICS Sector'].notna().sum()}/{len(df)}")
-        df.loc[(df['NAME'] == "BERKSHIRE HATHAWAY 'B'"), 'SYMBOL'] = 'BRK-B' 
+        df.loc[(df['NAME'] == "BERKSHIRE HATHAWAY 'B'"), 'SYMBOL'] = 'BRK-B'
+        return df
+
+    def delete_duplicates(self, df):
+        """
+        Remove duplicates based on SYMBOL, keeping only entries with " A" or " 'A'" in NAME
+
+        Args:
+            df: DataFrame with SYMBOL and NAME columns
+
+        Returns:
+            DataFrame with duplicates removed
+
+        Raises:
+            ValueError: If a pair of duplicates doesn't have a case with " A" or " 'A'" in NAME
+        """
+        print(f"  Checking for duplicate SYMBOLs...")
+
+        # Find duplicated symbols
+        duplicated_symbols = df[df['SYMBOL'].duplicated(keep=False)]['SYMBOL'].unique()
+
+        if len(duplicated_symbols) == 0:
+            print(f"    No duplicates found")
+            return df
+
+        print(f"    Found {len(duplicated_symbols)} duplicate SYMBOL(s): {', '.join(duplicated_symbols)}")
+
+        # Process each duplicated symbol
+        rows_to_keep = []
+
+        for symbol in duplicated_symbols:
+            duplicates = df[df['SYMBOL'] == symbol]
+
+            # Check for entries with " A" or " 'A'" at the end of NAME
+            # Pattern matches: " A" at end, or " 'A'" at end (with optional closing quote)
+            has_a_suffix = duplicates['NAME'].str.contains(r" A$| 'A'$", regex=True, na=False)
+
+            if has_a_suffix.sum() == 0:
+                # No entry has " A" or " 'A'" - raise error
+                names = duplicates['NAME'].tolist()
+                raise ValueError(
+                    f"Duplicate SYMBOL '{symbol}' found but none of the entries have ' A' or \" 'A'\" in NAME. "
+                    f"Names found: {names}"
+                )
+
+            # Keep only the entries with " A" or " 'A'"
+            rows_with_a = duplicates[has_a_suffix]
+            rows_to_keep.append(rows_with_a)
+
+            print(f"      {symbol}: Keeping {len(rows_with_a)} row(s) with ' A' or \" 'A'\", "
+                  f"removing {len(duplicates) - len(rows_with_a)} row(s)")
+
+        # Combine rows to keep with non-duplicated rows
+        non_duplicated = df[~df['SYMBOL'].isin(duplicated_symbols)]
+        df_cleaned = pd.concat([non_duplicated] + rows_to_keep, ignore_index=True)
+
+        print(f"    Removed {len(df) - len(df_cleaned)} duplicate row(s)")
+        return df_cleaned
+
+    def calculate_float_mcap(self, df):
+        """
+        Calculate float market capitalization for each company
+
+        Args:
+            df: DataFrame with price and ffnosh columns
+
+        Returns:
+            DataFrame with float_mcap column added
+        """
+        print(f"  Calculating float market capitalization...")
+
+        # Get column names for the current period
+        price_col = f'Price last day {self._format_period()}'
+        ffnosh_col = f'ffnosh last day {self._format_period()}'
+
+        # Check if required columns exist
+        if price_col not in df.columns or ffnosh_col not in df.columns:
+            raise ValueError(
+                f"Required columns not found. Expected '{price_col}' and '{ffnosh_col}'"
+            )
+
+        # Calculate float market cap (price * free float shares)
+        df['float_mcap'] = pd.to_numeric(df[price_col], errors='coerce') * \
+                           pd.to_numeric(df[ffnosh_col], errors='coerce')
+
+        # Report statistics
+        valid_mcap = df['float_mcap'].notna().sum()
+        print(f"    Companies with valid float_mcap: {valid_mcap}/{len(df)}")
+
+        if valid_mcap > 0:
+            total_mcap = df['float_mcap'].sum()
+            print(f"    Total float market cap: ${total_mcap:,.0f}")
+
         return df
 
     def load_price_and_shares(self, symbols_df):
@@ -103,8 +198,23 @@ class DatasetCreator:
         # Drop the 'Code' row (first row after header)
         price = price.iloc[1:]
 
-        # Get last price for each company (last row)
-        last_price_row = price.iloc[-1]
+        # Convert date column to datetime
+        price['Name'] = pd.to_datetime(price['Name'], errors='coerce')
+
+        # Get the target year-month from period (e.g., '1221' -> 2021-12)
+        year = int("20" + self.period[2:])
+        month = int(self.period[:2])
+
+        # Filter for the target month and year
+        price_filtered = price[(price['Name'].dt.year == year) & (price['Name'].dt.month == month)]
+
+        if len(price_filtered) == 0:
+            raise ValueError(f"No price data found for period {year}-{month:02d}")
+
+        # Get last price for the last day of the target month
+        last_price_row = price_filtered.iloc[-1]
+        actual_date = last_price_row['Name']
+        print(f"    Using price data from: {actual_date.strftime('%Y-%m-%d')}")
 
         # Create dataframe with company names and their last prices
         last_price = pd.DataFrame({
@@ -117,8 +227,19 @@ class DatasetCreator:
         # Drop the 'Code' row
         ffnosh = ffnosh.iloc[1:]
 
-        # Get last ffnosh for each company (last row)
-        last_ffnosh_row = ffnosh.iloc[-1]
+        # Convert date column to datetime
+        ffnosh['Name'] = pd.to_datetime(ffnosh['Name'], errors='coerce')
+
+        # Filter for the target month and year
+        ffnosh_filtered = ffnosh[(ffnosh['Name'].dt.year == year) & (ffnosh['Name'].dt.month == month)]
+
+        if len(ffnosh_filtered) == 0:
+            raise ValueError(f"No ffnosh data found for period {year}-{month:02d}")
+
+        # Get last ffnosh for the last day of the target month
+        last_ffnosh_row = ffnosh_filtered.iloc[-1]
+        actual_date_ffnosh = last_ffnosh_row['Name']
+        print(f"    Using ffnosh data from: {actual_date_ffnosh.strftime('%Y-%m-%d')}")
 
         # Clean column names - remove " - DS FREE FLOAT SHRE" suffix
         ffnosh_columns = [col.replace(' - DS FREE FLOAT SHRE', '') if isinstance(col, str) else col
@@ -222,6 +343,210 @@ class DatasetCreator:
         df['Carbon Intensity'] = df['Scope 1+2+3'] / pd.to_numeric(df['Revenue'], errors='coerce')
 
         return df
+
+    def impute_revenue_from_delisted(self, df):
+        """
+        Impute missing revenue values from delisted companies revenue CSV
+
+        Args:
+            df: DataFrame with SYMBOL and Revenue columns
+
+        Returns:
+            DataFrame with missing Revenue values filled from delisted companies data
+        """
+        print(f"  Imputing missing revenue from {self.delisted_revenue_file.name}...")
+
+        # Check if the file exists
+        if not self.delisted_revenue_file.exists():
+            print(f"    Warning: {self.delisted_revenue_file.name} not found, skipping revenue imputation")
+            return df
+
+        # Convert revenue to numeric for checking missing values
+        df['Revenue'] = pd.to_numeric(df['Revenue'], errors='coerce')
+
+        # Count missing values before imputation
+        missing_before = df['Revenue'].isna().sum()
+        print(f"    Companies with missing revenue: {missing_before}/{len(df)}")
+
+        if missing_before == 0:
+            print(f"    No missing revenue values to impute")
+            return df
+
+        # Load delisted companies revenue data
+        delisted_df = pd.read_csv(self.delisted_revenue_file)
+
+        # Strip whitespace from column names and values
+        delisted_df.columns = delisted_df.columns.str.strip()
+        delisted_df['Symbol'] = delisted_df['Symbol'].str.strip()
+
+        # Get the year from the period (e.g., '1221' -> 2021)
+        year = int("20" + self.period[2:])
+
+        # Filter delisted data for the target year
+        delisted_year = delisted_df[delisted_df['Year'] == year].copy()
+
+        if len(delisted_year) == 0:
+            print(f"    No delisted revenue data found for year {year}")
+            return df
+
+        # Create a mapping from Symbol to Revenue for this year
+        revenue_map = dict(zip(delisted_year['Symbol'], delisted_year['Revenue']))
+
+        # Impute missing revenue values
+        imputed_count = 0
+        for idx, row in df[df['Revenue'].isna()].iterrows():
+            symbol = row['SYMBOL']
+            if symbol in revenue_map:
+                df.loc[idx, 'Revenue'] = revenue_map[symbol]
+                imputed_count += 1
+                print(f"      Imputed revenue for {symbol}: ${revenue_map[symbol]:,.0f}")
+
+        # Count missing values after imputation
+        missing_after = df['Revenue'].isna().sum()
+
+        print(f"    Imputed revenue for {imputed_count} companies")
+        print(f"    Remaining companies with missing revenue: {missing_after}/{len(df)}")
+
+        # Recalculate carbon intensity for imputed values
+        df['Carbon Intensity'] = df['Scope 1+2+3'] / df['Revenue']
+
+        return df
+
+    def impute_scope_emissions(self, df):
+        """
+        Impute missing Scope 1, 2, and 3 emissions using MICE with PMM
+
+        Args:
+            df: DataFrame with Scope emissions, Revenue, float_mcap, Carbon Intensity, and GICS Sector columns
+
+        Returns:
+            DataFrame with imputed scope emissions and imputation flags
+        """
+        print(f"  Imputing missing scope emissions using MICE...")
+
+        # Create one-hot encoding for GICS Sector
+        gics = df.copy()
+        gics = pd.get_dummies(gics, columns=['GICS Sector'], prefix='Sector', drop_first=False)
+
+        # Define columns for imputation
+        columns = ["Scope 1", "Scope 2", "Scope 3", "Revenue", "float_mcap", "Carbon Intensity"]
+        sector_columns = [col for col in gics.columns if col.startswith("Sector_")]
+        all_cols = columns + sector_columns
+
+        # Convert all boolean columns to int (0/1)
+        bool_cols = gics.select_dtypes(include='bool').columns
+        gics[bool_cols] = gics[bool_cols].astype(int)
+
+        # Subset the data
+        data = gics[all_cols].copy().reset_index(drop=True)
+
+        # Convert object columns to float
+        object_cols = data.select_dtypes(include="object").columns
+        for col in object_cols:
+            data[col] = pd.to_numeric(data[col], errors='coerce')
+
+        # Check if there are any missing values to impute
+        missing_count = data[columns[:3]].isna().sum().sum()
+        if missing_count == 0:
+            print(f"    No missing scope emissions to impute")
+            return df
+
+        print(f"    Missing values before imputation:")
+        print(f"      Scope 1: {data['Scope 1'].isna().sum()}")
+        print(f"      Scope 2: {data['Scope 2'].isna().sum()}")
+        print(f"      Scope 3: {data['Scope 3'].isna().sum()}")
+
+        # Initialize kernel (this builds multiple trees for imputation)
+        kernel = mf.ImputationKernel(
+            data=data,
+            num_datasets=3,
+            mean_match_candidates=5,
+            random_state=1
+        )
+
+        # Run MICE with PMM
+        kernel.mice(5)  # 5 iterations
+
+        # Extract imputed dataset
+        completed_data = kernel.complete_data(dataset=0)
+
+        # Reset index for proper alignment
+        gics.reset_index(drop=True, inplace=True)
+
+        # Create imputation flags before replacing values
+        df['Scope 1 Imputed'] = 0
+        df['Scope 2 Imputed'] = 0
+        df['Scope 3 Imputed'] = 0
+
+        df.loc[gics['Scope 1'].isna(), 'Scope 1 Imputed'] = 1
+        df.loc[gics['Scope 2'].isna(), 'Scope 2 Imputed'] = 1
+        df.loc[gics['Scope 3'].isna(), 'Scope 3 Imputed'] = 1
+
+        # Replace missing values with imputed values
+        for col in ["Scope 1", "Scope 2", "Scope 3"]:
+            df.loc[df[col].isna(), col] = completed_data.loc[df[col].isna(), col]
+
+        print(f"    Imputed values:")
+        print(f"      Scope 1: {df['Scope 1 Imputed'].sum()} companies")
+        print(f"      Scope 2: {df['Scope 2 Imputed'].sum()} companies")
+        print(f"      Scope 3: {df['Scope 3 Imputed'].sum()} companies")
+
+        # Recalculate total emissions and carbon intensity
+        df['Scope 1+2+3'] = pd.to_numeric(df['Scope 1'], errors='coerce') + \
+                            pd.to_numeric(df['Scope 2'], errors='coerce') + \
+                            pd.to_numeric(df['Scope 3'], errors='coerce')
+        df['Carbon Intensity'] = df['Scope 1+2+3'] / pd.to_numeric(df['Revenue'], errors='coerce')
+
+        return df
+
+    def filter_stocks_with_missing_prices(self, df):
+        """
+        Filter out stocks with missing prices in the two years before the period
+        (e.g., due to late IPO or other reasons)
+
+        Args:
+            df: DataFrame with SYMBOL column
+
+        Returns:
+            DataFrame with stocks with missing prices removed
+        """
+        print(f"  Filtering stocks with missing prices from {self.missing_prices_file.name}...")
+
+        # Check if the file exists
+        if not self.missing_prices_file.exists():
+            print(f"    Warning: {self.missing_prices_file.name} not found, skipping filtering")
+            return df
+
+        # Load the stocks with missing prices
+        missing_prices_df = pd.read_excel(self.missing_prices_file)
+
+        # Get list of symbols to remove
+        symbols_to_remove = missing_prices_df['symbol'].tolist()
+
+        if len(symbols_to_remove) == 0:
+            print(f"    No stocks to filter for this period")
+            return df
+
+        # Count how many stocks will be removed
+        stocks_before = len(df)
+
+        # Filter out the stocks
+        df_filtered = df[~df['SYMBOL'].isin(symbols_to_remove)].copy()
+
+        stocks_after = len(df_filtered)
+        removed_count = stocks_before - stocks_after
+
+        print(f"    Stocks before filtering: {stocks_before}")
+        print(f"    Stocks to remove: {len(symbols_to_remove)}")
+        print(f"    Stocks actually removed: {removed_count}")
+
+        if removed_count > 0:
+            removed_symbols = df[df['SYMBOL'].isin(symbols_to_remove)]['SYMBOL'].tolist()
+            print(f"    Removed symbols: {', '.join(removed_symbols)}")
+
+        print(f"    Stocks after filtering: {stocks_after}")
+
+        return df_filtered
 
     def calculate_weights(self, df):
         """Calculate float market cap and sector weights"""
@@ -349,8 +674,13 @@ class DatasetCreator:
 
         # Step 1: Load and merge composition data
         df = self.load_symbol_data()
-        df = self.load_scope_emissions(df)
+        df = self.delete_duplicates(df)
         df = self.load_price_and_shares(df)
+        df = self.calculate_float_mcap(df)
+        df = self.load_scope_emissions(df)
+        df = self.impute_revenue_from_delisted(df)
+        df = self.impute_scope_emissions(df)
+        df = self.filter_stocks_with_missing_prices(df)
         df = self.calculate_weights(df)
 
         # Step 2: Load log returns
