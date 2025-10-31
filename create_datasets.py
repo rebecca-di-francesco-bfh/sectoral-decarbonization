@@ -95,6 +95,7 @@ class DatasetCreator:
         print(f"  Dataset shape: {df.shape}")
         print(f"  Companies with GICS sector: {df['GICS Sector'].notna().sum()}/{len(df)}")
         df.loc[(df['NAME'] == "BERKSHIRE HATHAWAY 'B'"), 'SYMBOL'] = 'BRK-B'
+        df.loc[(df['SYMBOL'] == "BF.B"), 'SYMBOL'] = 'BF-B'
         return df
 
     def delete_duplicates(self, df):
@@ -255,6 +256,44 @@ class DatasetCreator:
         df = pd.merge(symbols_df, last_price, on="NAME", how="left")
         df = pd.merge(df, last_ffnosh, on="NAME", how="left")
 
+        # Handle duplicates by aggregating: sum ffnosh, weight-average prices
+        price_col = f'Price last day {self._format_period()}'
+        ffnosh_col = f'ffnosh last day {self._format_period()}'
+
+        # Check for duplicates by SYMBOL
+        duplicates = df[df.duplicated(subset=['SYMBOL'], keep=False)]
+        if len(duplicates) > 0:
+            print(f"    Found {len(duplicates)} duplicate entries for {duplicates['SYMBOL'].nunique()} symbols")
+            print(f"    Aggregating duplicates: summing ffnosh, weight-averaging prices")
+
+            # Convert to numeric for aggregation
+            df[price_col] = pd.to_numeric(df[price_col], errors='coerce')
+            df[ffnosh_col] = pd.to_numeric(df[ffnosh_col], errors='coerce')
+
+            # Aggregate by SYMBOL (not TYPE)
+            aggregated = df.groupby('SYMBOL').apply(
+                lambda group: pd.Series({
+                    'Total_ffnosh': group[ffnosh_col].sum(),
+                    'Weighted_Price': (
+                        (group[ffnosh_col] * group[price_col]).sum() / group[ffnosh_col].sum()
+                        if group[ffnosh_col].sum() > 0 else group[price_col].iloc[0]
+                    )
+                })
+            ).reset_index()
+
+            # Merge aggregated values back to original df
+            df = pd.merge(df, aggregated[['SYMBOL', 'Total_ffnosh', 'Weighted_Price']],
+                          on='SYMBOL', how='left')
+
+            # Replace original columns with aggregated values
+            df[ffnosh_col] = df['Total_ffnosh']
+            df[price_col] = df['Weighted_Price']
+
+            # Drop temporary columns
+            df = df.drop(columns=['Total_ffnosh', 'Weighted_Price'])
+
+            print(f"    Aggregated values merged back to {len(df)} rows")
+
         return df
 
     def load_scope_emissions(self, df):
@@ -407,6 +446,12 @@ class DatasetCreator:
         print(f"    Imputed revenue for {imputed_count} companies")
         print(f"    Remaining companies with missing revenue: {missing_after}/{len(df)}")
 
+        # Print companies with missing revenue and break
+        if missing_after > 0:
+            missing_companies = df[df['Revenue'].isna()]['NAME'].tolist()
+            print(f"    Companies with missing revenue: {missing_companies}")
+            raise ValueError(f"Stopping execution: {missing_after} companies still have missing revenue: {missing_companies}")
+
         # Recalculate carbon intensity for imputed values
         df['Carbon Intensity'] = df['Scope 1+2+3'] / df['Revenue']
 
@@ -557,6 +602,14 @@ class DatasetCreator:
         ffnosh_col = f'ffnosh last day {self._format_period()}'
         df['float_mcap'] = pd.to_numeric(df[price_col], errors='coerce') * pd.to_numeric(df[ffnosh_col], errors='coerce')
 
+        # DEBUG: Check for missing GICS Sector
+        missing_gics = df[df['GICS Sector'].isna()]
+        if len(missing_gics) > 0:
+            print(f"\n  WARNING: Found {len(missing_gics)} companies with missing GICS Sector:")
+            for _, row in missing_gics.iterrows():
+                print(f"    - {row['NAME']} ({row['SYMBOL']})")
+            print(f"  These companies will be excluded from weight calculations.\n")
+
         # Calculate weights within each sector (handle zero-sum sectors)
         def safe_weight_calc(x):
             total = x.sum()
@@ -565,6 +618,11 @@ class DatasetCreator:
             return x / total
 
         df['weight_in_sector'] = df.groupby('GICS Sector')['float_mcap'].transform(safe_weight_calc)
+
+        # Verify that weights sum to 1.0 within each sector
+        for sector in df['GICS Sector'].unique():
+            sector_weights = df[df['GICS Sector'] == sector]['weight_in_sector'].values
+            assert np.isclose(sector_weights.sum(), 1.0), f"Weights in sector {sector} do not sum to 1.0"
 
         # Rank stocks within sector by market cap
         df['rank_in_sector'] = df.groupby('GICS Sector')['float_mcap'].rank(
@@ -582,9 +640,14 @@ class DatasetCreator:
         adj_close.index = pd.to_datetime(adj_close['Date'])
         adj_close.drop(columns='Date', inplace=True)
 
+        # Ensure no zeros, forward-fill small gaps
+        adj_close = adj_close.replace(0, np.nan).ffill().dropna(how="all")
+
+        # Take last observation each month
+        monthly_prices = adj_close.resample("M").last()
+
         # Compute log returns
-        log_returns = np.log(adj_close / adj_close.shift(1))
-        log_returns = log_returns.dropna()
+        log_returns = np.log(monthly_prices / monthly_prices.shift(1)).dropna(how="all")
         log_returns.reset_index(inplace=True)
 
         return log_returns
@@ -674,9 +737,9 @@ class DatasetCreator:
 
         # Step 1: Load and merge composition data
         df = self.load_symbol_data()
-        df = self.delete_duplicates(df)
         df = self.load_price_and_shares(df)
         df = self.calculate_float_mcap(df)
+        df = self.delete_duplicates(df)
         df = self.load_scope_emissions(df)
         df = self.impute_revenue_from_delisted(df)
         df = self.impute_scope_emissions(df)
@@ -716,7 +779,7 @@ def create_all_datasets(periods=None, data_dir="data", save_full=True):
         save_full: Whether to save full composition datasets
     """
     if periods is None:
-        periods = ['1221', '0322', '0622', '0922', '1222']
+        periods = ["0321", "0621", "0921", "1221", "0322", "0622", "0922", "1222", "0323", "0623", "0923", "1223"]
 
     print(f"\n{'#'*60}")
     print(f"# Dataset Creation Script - Sectoral Decarbonisation")

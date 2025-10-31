@@ -34,7 +34,7 @@ class YahooDataDownloader:
         # Set up file paths
         self.symbol_file = self.data_dir / "lseg" / "constituents_symbols" / f"symbol_comp_{period}.xlsm"
         self.price_file = self.data_dir / "lseg" / "prices_dividends" / f"price_div_comp_{period}.xlsm"
-        self.output_file = self.data_dir / "yahoo" / f"adj_price_yahoo_comp_{period}_new.xlsx"
+        self.output_file = self.data_dir / "yahoo" / f"adj_price_yahoo_comp_{period}.xlsx"
 
         # Create output directory if needed
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -45,7 +45,7 @@ class YahooDataDownloader:
     def _calculate_date_range(self):
         """
         Calculate start and end dates based on period.
-        Start: 2 years and 1 month before period
+        Start: 2 years and 1 day before period
         End: 4 months after period
         """
         # Parse period: "1221" -> December 2021
@@ -54,8 +54,8 @@ class YahooDataDownloader:
 
         period_date = datetime(year, month, 1)
 
-        # Start date: 2 years 1 month before
-        start_date = period_date - relativedelta(years=2, months=1)
+        # Start date: 2 years 1 day before
+        start_date = period_date - relativedelta(years=2)
 
         # End date: 4 months after
         end_date = period_date + relativedelta(months=4)
@@ -185,6 +185,7 @@ class YahooDataDownloader:
         adj_close_yahoo = pd.DataFrame(adj_close_dict)
 
         print(f"  Successfully downloaded {len(adj_close_yahoo.columns)}/{len(all_symbols)} symbols from Yahoo")
+
         return adj_close_yahoo
 
     def check_nans(self, adj_close_data):
@@ -209,8 +210,8 @@ class YahooDataDownloader:
             print(f"    - {col}: {nan_count}/{total_rows} NaNs, first valid data: {first_valid}")
             rows.append({
             "symbol": col,
-            "period": self.period,             # comes from your outer scope
-            "start_period": self.start_date,
+            "period": self.period,
+            "start_period": adj_close_data.index[0],
             "first_valid": first_valid,
             "nan_count": nan_count,
             "total_rows": total_rows,
@@ -345,18 +346,32 @@ class YahooDataDownloader:
                     else:
                         still_missing.append(symbol)
                         print(f"    ✗ Still missing: {symbol}")
-                print(adj_close_data)
+
                 # Concatenate LSEG data with Yahoo data in one operation
                 if lseg_fill_dict:
                     lseg_fill_df = pd.DataFrame(lseg_fill_dict)
                     # Reindex LSEG data to match Yahoo data index, filling missing dates with NaN
                     lseg_fill_df = lseg_fill_df.reindex(adj_close_data.index)
                     adj_close_data = pd.concat([adj_close_data, lseg_fill_df], axis=1)
-                print(adj_close_data)
+         
                 print(f"\n  Filled {filled_count}/{len(missing_from_yahoo)} symbols from LSEG")
 
                 if still_missing:
                     print(f"\n  WARNING: {len(still_missing)} symbols still missing: {', '.join(still_missing)}")
+
+        # Align start to the last available trading day of the first month
+        if not adj_close_data.empty:
+            first_month = adj_close_data.index[0].month
+            first_year = adj_close_data.index[0].year
+            last_day_first_month = adj_close_data.loc[
+                (adj_close_data.index.year == first_year) &
+                (adj_close_data.index.month == first_month)
+            ].index.max()
+
+            print(f"  Aligning start: first trading day is {adj_close_data.index[0].date()}, "
+                  f"using last day of first month: {last_day_first_month.date()}")
+
+            adj_close_data = adj_close_data.loc[last_day_first_month:]
 
         # Save data
         self.save_data(adj_close_data)
@@ -368,7 +383,7 @@ class YahooDataDownloader:
 
 def main():
     """Download Yahoo Finance data for all time periods"""
-    periods = ["1221", "0322", "0622", "0922", "1222"]
+    periods = ["0321", "0621", "0921", "1221", "0322", "0622", "0922", "1222", "0323", "0623", "0923", "1223"]
 
     print("\n" + "="*60)
     print("Yahoo Finance Data Downloader")
