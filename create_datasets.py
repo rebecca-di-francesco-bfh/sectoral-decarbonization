@@ -297,69 +297,152 @@ class DatasetCreator:
         return df
 
     def load_scope_emissions(self, df):
-        """Load scope emissions and revenue data"""
-        print(f"  Loading emissions data from {self.carbon_file.name}...")
+        """Load scope emissions and revenue data from filled files"""
+        print(f"  Loading emissions data from filled files...")
 
-        # Create mapping from Type code to company NAME
-        # Read the symbol file to get Type codes and corresponding names
-        symbol_data = pd.read_excel(self.symbol_file, sheet_name="SYMBOL", header=None)
-        type_codes = symbol_data.iloc[1, 1:].astype(str).values  # Row 1 contains Type codes
-        company_names = symbol_data.iloc[2, 1:].values  # Row 2 contains company NAMEs
+        # Define paths to filled and unfilled files
+        filled_dir = self.data_dir / "merged_scope_emissions"
+        scope_1_filled_file = filled_dir / "scope_1_all_periods_filled.xlsx"
+        scope_2_filled_file = filled_dir / "scope_2_all_periods_filled.xlsx"
+        scope_3_filled_file = filled_dir / "scope_3_all_periods_filled.xlsx"
+        scope_1_unfilled_file = filled_dir / "scope_1_all_periods.xlsx"
+        scope_2_unfilled_file = filled_dir / "scope_2_all_periods.xlsx"
+        scope_3_unfilled_file = filled_dir / "scope_3_all_periods.xlsx"
 
-        # Create mapping dictionary: Type code -> Company NAME
-        code_to_name = dict(zip(type_codes, company_names))
-  
-        # Read scope emissions - use most recent data row
-        scope_1_df = pd.read_excel(self.carbon_file, sheet_name="SCOPE 1", header=4)
         # Convert period format from "1221" to "2021-12" for date matching
-        year = "20" + self.period[2:]
-        month = self.period[:2]
-        period_date = f"{year}-{month}"
+        year = int("20" + self.period[2:])
+        month = int(self.period[:2])
 
-        period_mask = scope_1_df.iloc[:, 0].astype(str).str.contains(period_date, na=False)
-        target_row = scope_1_df[period_mask].iloc[-1]
+        # Read Scope 1 from filled file
+        print(f"    Reading {scope_1_filled_file.name}...")
+        scope_1_df = pd.read_excel(scope_1_filled_file, index_col=0, parse_dates=True)
 
-        # Extract scope 1 data using TYPE codes as index
-        scope_1_data = {}
-        for col_name, value in target_row.items():
-            if col_name != 'Code' and '(' in str(col_name):
-                # Extract just the code part before the parenthesis
-                code = str(col_name).split('(')[0]
-                scope_1_data[code] = value
+        # Filter for the target year and month, take the last available date in that month
+        scope_1_period = scope_1_df[(scope_1_df.index.year == year) & (scope_1_df.index.month == month)]
 
-        scope_1 = pd.Series(scope_1_data, name='Scope 1')
+        if len(scope_1_period) == 0:
+            raise ValueError(f"No Scope 1 data found for period {year}-{month:02d}")
 
-      
-        # Read scope 2
-        scope_2_df = pd.read_excel(self.carbon_file, sheet_name="SCOPE 2", header=4)
-        period_mask = scope_2_df.iloc[:, 0].astype(str).str.contains(period_date, na=False)
-        target_row = scope_2_df[period_mask].iloc[-1]
+        # Get the last row for this period
+        scope_1_row = scope_1_period.iloc[-1]
+        actual_date_scope1 = scope_1_period.index[-1]
+        print(f"      Target period: {year}-{month:02d}")
+        print(f"      Using Scope 1 data from: {actual_date_scope1.strftime('%Y-%m-%d')}")
+        print(f"      Number of companies in Scope 1: {scope_1_row.notna().sum()}")
+        scope_1 = pd.Series(scope_1_row, name='Scope 1')
 
-        scope_2_data = {}
-        for col_name, value in target_row.items():
-            if col_name != 'Code' and '(' in str(col_name):
-                code = str(col_name).split('(')[0]
-                scope_2_data[code] = value
+        # Read Scope 1 unfilled file to calculate filled values
+        print(f"    Reading {scope_1_unfilled_file.name}...")
+        scope_1_unfilled_df = pd.read_excel(scope_1_unfilled_file, index_col=0, parse_dates=True)
+        scope_1_unfilled_period = scope_1_unfilled_df[(scope_1_unfilled_df.index.year == year) &
+                                                       (scope_1_unfilled_df.index.month == month)]
 
-        scope_2 = pd.Series(scope_2_data, name='Scope 2')
-   
-        # Read scope 3
-        scope_3_df = pd.read_excel(self.carbon_file, sheet_name="SCOPE 3", header=4)
-        period_mask = scope_3_df.iloc[:, 0].astype(str).str.contains(period_date, na=False)
-        target_row = scope_3_df[period_mask].iloc[-1]
+        if len(scope_1_unfilled_period) > 0:
+            scope_1_unfilled_row = scope_1_unfilled_period.iloc[-1]
+            # Get common columns between filled and unfilled
+            common_cols_s1 = scope_1_row.index.intersection(scope_1_unfilled_row.index)
+            # Create binary indicator: 1 if unfilled was NaN but filled is not NaN, 0 otherwise
+            scope_1_filled_indicator = ((scope_1_unfilled_row[common_cols_s1].isna()) &
+                                       (scope_1_row[common_cols_s1].notna())).astype(int)
+            filled_count_s1 = scope_1_filled_indicator.sum()
+            print(f"      Number of filled values in Scope 1: {filled_count_s1}")
+        else:
+            filled_count_s1 = 0
+            scope_1_filled_indicator = pd.Series(0, index=scope_1_row.index)
+            print(f"      No unfilled Scope 1 data found for comparison")
 
-        scope_3_data = {}
-        for col_name, value in target_row.items():
-            if col_name != 'Code' and '(' in str(col_name):
-                code = str(col_name).split('(')[0]
-                scope_3_data[code] = value
+        scope_1_filled_count = pd.Series(scope_1_filled_indicator, name='Filled Scope 1 Count')
 
-        scope_3 = pd.Series(scope_3_data, name='Scope 3')
+        # Read Scope 2 from filled file
+        print(f"    Reading {scope_2_filled_file.name}...")
+        scope_2_df = pd.read_excel(scope_2_filled_file, index_col=0, parse_dates=True)
 
-        # Read revenue
+        # Filter for the target year and month
+        scope_2_period = scope_2_df[(scope_2_df.index.year == year) & (scope_2_df.index.month == month)]
+
+        if len(scope_2_period) == 0:
+            raise ValueError(f"No Scope 2 data found for period {year}-{month:02d}")
+
+        # Get the last row for this period
+        scope_2_row = scope_2_period.iloc[-1]
+        actual_date_scope2 = scope_2_period.index[-1]
+        print(f"      Using Scope 2 data from: {actual_date_scope2.strftime('%Y-%m-%d')}")
+        print(f"      Number of companies in Scope 2: {scope_2_row.notna().sum()}")
+        scope_2 = pd.Series(scope_2_row, name='Scope 2')
+
+        # Read Scope 2 unfilled file to calculate filled values
+        print(f"    Reading {scope_2_unfilled_file.name}...")
+        scope_2_unfilled_df = pd.read_excel(scope_2_unfilled_file, index_col=0, parse_dates=True)
+        scope_2_unfilled_period = scope_2_unfilled_df[(scope_2_unfilled_df.index.year == year) &
+                                                       (scope_2_unfilled_df.index.month == month)]
+
+        if len(scope_2_unfilled_period) > 0:
+            scope_2_unfilled_row = scope_2_unfilled_period.iloc[-1]
+            # Get common columns between filled and unfilled
+            common_cols_s2 = scope_2_row.index.intersection(scope_2_unfilled_row.index)
+            # Create binary indicator: 1 if unfilled was NaN but filled is not NaN, 0 otherwise
+            scope_2_filled_indicator = ((scope_2_unfilled_row[common_cols_s2].isna()) &
+                                       (scope_2_row[common_cols_s2].notna())).astype(int)
+            filled_count_s2 = scope_2_filled_indicator.sum()
+            print(f"      Number of filled values in Scope 2: {filled_count_s2}")
+        else:
+            filled_count_s2 = 0
+            scope_2_filled_indicator = pd.Series(0, index=scope_2_row.index)
+            print(f"      No unfilled Scope 2 data found for comparison")
+
+        scope_2_filled_count = pd.Series(scope_2_filled_indicator, name='Filled Scope 2 Count')
+
+        # Read Scope 3 from filled file
+        print(f"    Reading {scope_3_filled_file.name}...")
+        scope_3_df = pd.read_excel(scope_3_filled_file, index_col=0, parse_dates=True)
+
+        # Filter for the target year and month
+        scope_3_period = scope_3_df[(scope_3_df.index.year == year) & (scope_3_df.index.month == month)]
+
+        if len(scope_3_period) == 0:
+            raise ValueError(f"No Scope 3 data found for period {year}-{month:02d}")
+
+        # Get the last row for this period
+        scope_3_row = scope_3_period.iloc[-1]
+        actual_date_scope3 = scope_3_period.index[-1]
+        print(f"      Using Scope 3 data from: {actual_date_scope3.strftime('%Y-%m-%d')}")
+        print(f"      Number of companies in Scope 3: {scope_3_row.notna().sum()}")
+        scope_3 = pd.Series(scope_3_row, name='Scope 3')
+
+        # Read Scope 3 unfilled file to calculate filled values
+        print(f"    Reading {scope_3_unfilled_file.name}...")
+        scope_3_unfilled_df = pd.read_excel(scope_3_unfilled_file, index_col=0, parse_dates=True)
+        scope_3_unfilled_period = scope_3_unfilled_df[(scope_3_unfilled_df.index.year == year) &
+                                                       (scope_3_unfilled_df.index.month == month)]
+
+        if len(scope_3_unfilled_period) > 0:
+            scope_3_unfilled_row = scope_3_unfilled_period.iloc[-1]
+            # Get common columns between filled and unfilled
+            common_cols_s3 = scope_3_row.index.intersection(scope_3_unfilled_row.index)
+            # Create binary indicator: 1 if unfilled was NaN but filled is not NaN, 0 otherwise
+            scope_3_filled_indicator = ((scope_3_unfilled_row[common_cols_s3].isna()) &
+                                       (scope_3_row[common_cols_s3].notna())).astype(int)
+            filled_count_s3 = scope_3_filled_indicator.sum()
+            print(f"      Number of filled values in Scope 3: {filled_count_s3}")
+        else:
+            filled_count_s3 = 0
+            scope_3_filled_indicator = pd.Series(0, index=scope_3_row.index)
+            print(f"      No unfilled Scope 3 data found for comparison")
+
+        scope_3_filled_count = pd.Series(scope_3_filled_indicator, name='Filled Scope 3 Count')
+
+        # Read revenue from original carbon file (not filled)
+        print(f"    Reading revenue from {self.carbon_file.name}...")
         revenue_df = pd.read_excel(self.carbon_file, sheet_name="REVENUE", header=4)
+
+        # Create period_date string for matching
+        period_date = f"{year}-{month:02d}"
         period_mask = revenue_df.iloc[:, 0].astype(str).str.contains(period_date, na=False)
         target_row = revenue_df[period_mask].iloc[-1]
+
+        # Get the actual date from the revenue data
+        actual_date_revenue = target_row.iloc[0]
+        print(f"      Using Revenue data from: {actual_date_revenue}")
 
         revenue_data = {}
         for col_name, value in target_row.items():
@@ -367,6 +450,7 @@ class DatasetCreator:
                 code = str(col_name).split('(')[0]
                 revenue_data[code] = value
 
+        print(f"      Number of companies in Revenue: {len([v for v in revenue_data.values() if pd.notna(v)])}")
         revenue = pd.Series(revenue_data, name='Revenue')
 
         # Merge with main dataframe using TYPE as the key
@@ -374,6 +458,22 @@ class DatasetCreator:
         df = pd.merge(df, scope_2, how='left', left_on='TYPE', right_index=True)
         df = pd.merge(df, scope_3, how='left', left_on='TYPE', right_index=True)
         df = pd.merge(df, revenue, how='left', left_on='TYPE', right_index=True)
+
+        # Merge filled indicator columns - binary flags (1 or 0) for each company
+        df = pd.merge(df, scope_1_filled_count, how='left', left_on='TYPE', right_index=True)
+        df = pd.merge(df, scope_2_filled_count, how='left', left_on='TYPE', right_index=True)
+        df = pd.merge(df, scope_3_filled_count, how='left', left_on='TYPE', right_index=True)
+
+        # Fill NaN values in filled count columns with 0 (companies not in the filled data)
+        df['Filled Scope 1 Count'] = df['Filled Scope 1 Count'].fillna(0).astype(int)
+        df['Filled Scope 2 Count'] = df['Filled Scope 2 Count'].fillna(0).astype(int)
+        df['Filled Scope 3 Count'] = df['Filled Scope 3 Count'].fillna(0).astype(int)
+
+        # Print summary of filled counts
+        print(f"\n  Summary of filled emissions:")
+        print(f"    Filled Scope 1 Count: {filled_count_s1}")
+        print(f"    Filled Scope 2 Count: {filled_count_s2}")
+        print(f"    Filled Scope 3 Count: {filled_count_s3}")
 
         # Calculate total emissions and carbon intensity
         df['Scope 1+2+3'] = pd.to_numeric(df['Scope 1'], errors='coerce') + \
@@ -679,8 +779,15 @@ class DatasetCreator:
 
     def save_benchmark_weights_carbon(self, df):
         """Save benchmark weights and carbon intensity DataFrame"""
-        # Select only required columns
-        output_df = df[['SYMBOL', 'NAME', 'GICS Sector', 'Carbon Intensity', 'weight_in_sector']].copy()
+        # Select required columns including scope emissions, revenue, and imputation flags
+        output_df = df[[
+            'SYMBOL', 'NAME', 'GICS Sector',
+            'Scope 1', 'Scope 2', 'Scope 3',
+            'Revenue',
+            'Scope 1 Imputed', 'Scope 2 Imputed', 'Scope 3 Imputed', 
+            'Filled Scope 1 Count', 'Filled Scope 2 Count', 'Filled Scope 3 Count',
+            'Carbon Intensity', 'weight_in_sector', 'TYPE'
+        ]].copy()
 
         # Sort by sector and weight
         output_df = output_df.sort_values(['GICS Sector', 'weight_in_sector'], ascending=[True, False])
