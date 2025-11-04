@@ -31,6 +31,7 @@ def main():
     """Main function to process all periods and compute sector portfolio returns."""
     # Initialize list to store all period results
     all_sector_portfolios = []
+    all_sector_volatilities = []
 
     for period in ["0321","0621", "0921", "1221", "0322", "0622", "0922", "1222", "0323", "0623", "0923", "1223"]:
         print("\n" + "="*80)
@@ -205,6 +206,21 @@ def main():
         sector_portfolio_df['period'] = period
 
         all_sector_portfolios.append(sector_portfolio_df)
+
+        # Calculate quarterly annualized volatility for this period
+        # Assuming ~63 trading days per quarter (252/4)
+        quarterly_returns = sector_portfolio_df.drop(columns='period')
+        daily_vol_quarterly = quarterly_returns.std(skipna=True)
+        annualized_vol_quarterly = daily_vol_quarterly * np.sqrt(252)
+
+        # Create a DataFrame for this quarter's volatility
+        volatility_df = pd.DataFrame({
+            'period': period,
+            'sector': annualized_vol_quarterly.index,
+            'annualized_volatility': annualized_vol_quarterly.values
+        })
+        all_sector_volatilities.append(volatility_df)
+
         print(f"   ✓ Computed returns for {len(sector_portfolio_returns)} sectors")
         print(f"   ✓ Period {period} complete!\n")
 
@@ -215,6 +231,10 @@ def main():
     combined_sector_portfolio = pd.concat(all_sector_portfolios, axis=0)
     print(f"✓ Combined {len(all_sector_portfolios)} periods into final dataset")
     print(f"✓ Total rows: {len(combined_sector_portfolio)}, Columns: {combined_sector_portfolio.shape[1]}")
+
+    # Combine all quarterly volatilities
+    combined_sector_volatilities = pd.concat(all_sector_volatilities, axis=0, ignore_index=True)
+    print(f"✓ Combined quarterly volatilities for all periods")
     print("\nDone!")
 
     # --- Compute Annualized Volatility by Sector (2021–2023) ---
@@ -236,8 +256,12 @@ def main():
     print("="*80)
     print(annualized_vol.round(4))
 
-    # Optional: Save to Excel for reporting
+    # Save overall annualized volatility to Excel
     annualized_vol.to_excel("data/benchmark_returns_volatility/sector_annualized_volatility_2021_2023.xlsx")
+
+    # Save quarterly volatilities to Excel
+    combined_sector_volatilities.to_excel("data/benchmark_returns_volatility/sector_annualized_volatility_by_quarter.xlsx", index=False)
+    print("\n✓ Saved quarterly volatilities to 'data/benchmark_returns_volatility/sector_annualized_volatility_by_quarter.xlsx'")
 
 
 if __name__ == "__main__":

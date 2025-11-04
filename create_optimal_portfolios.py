@@ -10,82 +10,14 @@ Key concepts:
 - Carbon Intensity: Carbon emissions per unit of revenue
 - Efficient Frontier: Set of optimal portfolios offering the best carbon reduction for each TE level
 """
-
-from sklearn.covariance import LedoitWolf
 import os
 import pickle
 import cvxpy as cp
 import numpy as np
 import pandas as pd
+from utils import sigma_raw_fn, sigma_shrink_fn
 
 #  TE - CARBON FRONTIERS OPTIMIZATION
-
-# --- Utility functions ---
-
-def nearest_psd(A):
-    """
-    Convert a symmetric matrix to the nearest positive semi-definite (PSD) matrix.
-
-    This is necessary because numerical errors can sometimes produce covariance matrices
-    with slightly negative eigenvalues, which violates the PSD requirement for covariance.
-
-    Method:
-    1. Compute eigendecomposition of matrix A
-    2. Set any negative eigenvalues to zero
-    3. Reconstruct the matrix using the corrected eigenvalues
-
-    Args:
-        A: Square symmetric matrix (typically a covariance matrix)
-
-    Returns:
-        Nearest PSD matrix to A
-    """
-    eigvals, eigvecs = np.linalg.eigh(A)
-    eigvals[eigvals < 0] = 0  # Replace negative eigenvalues with zero
-    return eigvecs @ np.diag(eigvals) @ eigvecs.T
-
-
-def sigma_raw_fn(R_clean):
-    """
-    Calculate the raw (sample) covariance matrix from returns data.
-
-    Args:
-        R_clean: DataFrame of clean returns data (no NaN values)
-
-    Returns:
-        Sample covariance matrix
-    """
-    return R_clean.cov()
-
-
-def sigma_shrink_fn(R_clean):
-    """
-    Calculate a shrunk covariance matrix using Ledoit-Wolf shrinkage estimator.
-
-    Ledoit-Wolf shrinkage improves covariance estimation by shrinking the sample
-    covariance towards a structured estimator (identity matrix). This is particularly
-    useful when the number of observations is small relative to the number of assets.
-
-    Benefits:
-    - More stable estimates (especially with limited data)
-    - Better conditioning (avoids numerical issues)
-    - Improved out-of-sample performance
-
-    Args:
-        R_clean: DataFrame of clean returns data (no NaN values)
-
-    Returns:
-        tuple: (Regularized PSD covariance matrix, shrinkage intensity alpha)
-    """
-    lw = LedoitWolf().fit(R_clean)
-    Sigma_shrink = lw.covariance_
-
-    # Add small regularization term to diagonal for numerical stability
-    Sigma_reg = Sigma_shrink + 1e-5 * np.eye(Sigma_shrink.shape[0])
-
-    # Ensure PSD property
-    return nearest_psd(Sigma_reg), lw.shrinkage_
-
 
 def run_sector_optimisation(sector_name, sector, R, cov_type="raw", cache_dir="cache"):
     """
