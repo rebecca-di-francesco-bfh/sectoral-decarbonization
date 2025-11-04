@@ -2,6 +2,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 import numpy as np
+import os
 
 
 def aggregate_duplicates(price_df, ffnosh_df):
@@ -29,6 +30,9 @@ def check_duplicate_nans(price_df, ffnosh_df):
 
 def main():
     """Main function to process all periods and compute sector portfolio returns."""
+    # Create output directory for daily returns
+    os.makedirs("data/daily_returns_3m", exist_ok=True)
+
     # Initialize list to store all period results
     all_sector_portfolios = []
     all_sector_volatilities = []
@@ -191,15 +195,25 @@ def main():
         daily_returns_next_3m = adj_close_bt.pct_change().dropna()
 
         sector_portfolio_returns = {}
-        for sector, weights_df in sector_weights.items():
-            common_tickers = weights_df.columns.intersection(daily_returns_next_3m.columns)
-            common_index = weights_df.index.intersection(daily_returns_next_3m.index)
 
-            w = weights_df.loc[common_index, common_tickers]
-            r = daily_returns_next_3m.loc[common_index, common_tickers]
+        # Save daily returns by sector for this period
+        print(f"   ✓ Saving daily returns by sector for period {period}...")
+        output_file = f"data/daily_returns_3m/daily_returns_{period}.xlsx"
+        with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+            for sector, weights_df in sector_weights.items():
+                common_tickers = weights_df.columns.intersection(daily_returns_next_3m.columns)
+                common_index = weights_df.index.intersection(daily_returns_next_3m.index)
 
-            sector_returns = (w * r).sum(axis=1)
-            sector_portfolio_returns[sector] = sector_returns
+                w = weights_df.loc[common_index, common_tickers]
+                r = daily_returns_next_3m.loc[common_index, common_tickers]
+
+                # Save sector daily returns to Excel sheet
+                r.to_excel(writer, sheet_name=sector)
+
+                sector_returns = (w * r).sum(axis=1)
+                sector_portfolio_returns[sector] = sector_returns
+
+        print(f"   ✓ Saved daily returns to {output_file}")
 
         # Put all in a single DataFrame
         sector_portfolio_df = pd.DataFrame(sector_portfolio_returns)
@@ -232,10 +246,15 @@ def main():
     print(f"✓ Combined {len(all_sector_portfolios)} periods into final dataset")
     print(f"✓ Total rows: {len(combined_sector_portfolio)}, Columns: {combined_sector_portfolio.shape[1]}")
 
+    # Save combined sector portfolio returns
+    combined_sector_portfolio.to_excel("data/benchmark_returns_volatility/sector_portfolio_returns_all_periods.xlsx")
+    print("✓ Saved sector portfolio returns to 'data/benchmark_returns_volatility/sector_portfolio_returns_all_periods.xlsx'")
+
     # Combine all quarterly volatilities
     combined_sector_volatilities = pd.concat(all_sector_volatilities, axis=0, ignore_index=True)
     print(f"✓ Combined quarterly volatilities for all periods")
     print("\nDone!")
+
 
     # --- Compute Annualized Volatility by Sector (2021–2023) ---
 

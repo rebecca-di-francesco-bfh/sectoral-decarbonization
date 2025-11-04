@@ -1,5 +1,5 @@
 """
-Simple analysis to understand the Financials drop in 1222
+Simple analysis to understand the Real Estate drop in 0623
 Uses only standard library + pandas/openpyxl which should be available
 """
 
@@ -15,11 +15,11 @@ except ImportError as e:
     sys.exit(1)
 
 print("=" * 80)
-print("ANALYZING FINANCIALS FLEXIBILITY SCORE DROP IN PERIOD 1222")
+print("ANALYZING Real Estate FLEXIBILITY SCORE DROP IN PERIOD 0623")
 print("=" * 80)
 
 # Periods to compare
-periods = ['0922', '1222', '0323']
+periods = ['0323', '0623', '0923']
 
 print("\n1. CHECKING RAW METRICS FROM INDIVIDUAL PERIOD FILES")
 print("-" * 80)
@@ -30,11 +30,11 @@ for period in periods:
     if os.path.exists(excel_file):
         df = pd.read_excel(excel_file)
 
-        # Find Financials row
-        fin_row = df[df['Sector'] == 'Financials']
+        # Find Real Estate row
+        fin_row = df[df['Sector'] == 'Real Estate']
 
         if not fin_row.empty:
-            print(f"\nPeriod {period} - Financials:")
+            print(f"\nPeriod {period} - Real Estate:")
             print(f"  L2_lower_bound_same_obj: {fin_row['L2_lower_bound_same_obj'].values[0]}")
             print(f"  Avg_bandwidth: {fin_row['Avg_bandwidth'].values[0]}")
             print(f"  Median_bandwidth: {fin_row['Median_bandwidth'].values[0]}")
@@ -44,10 +44,10 @@ for period in periods:
             print(f"\n  All sectors in {period} (sorted by L2):")
             df_sorted = df[['Sector', 'L2_lower_bound_same_obj', 'Avg_bandwidth']].sort_values('L2_lower_bound_same_obj', ascending=False)
             for idx, row in df_sorted.iterrows():
-                marker = " <<<" if row['Sector'] == 'Financials' else ""
+                marker = " <<<" if row['Sector'] == 'Real Estate' else ""
                 print(f"    {row['Sector']:30s} L2={row['L2_lower_bound_same_obj']:.6f}, AvgBW={row['Avg_bandwidth']:.6f}{marker}")
         else:
-            print(f"\nPeriod {period}: Financials not found!")
+            print(f"\nPeriod {period}: Real Estate not found!")
     else:
         print(f"\nPeriod {period}: File not found - {excel_file}")
 
@@ -61,10 +61,10 @@ for period in periods:
         with open(pkl_file, 'rb') as f:
             portfolios = pickle.load(f)
 
-        if 'Financials' in portfolios:
-            fin_data = portfolios['Financials']
+        if 'Real Estate' in portfolios:
+            fin_data = portfolios['Real Estate']
 
-            print(f"\nPeriod {period} - Financials optimal portfolio:")
+            print(f"\nPeriod {period} - Real Estate optimal portfolio:")
 
             # Show diagnostics if available
             if 'diagnostics' in fin_data:
@@ -94,7 +94,7 @@ for period in periods:
                     print(f"  Max weight: {w.max():.4f}")
                     print(f"  HHI: {(w**2).sum():.4f}")
         else:
-            print(f"\nPeriod {period}: Financials not in optimal portfolios!")
+            print(f"\nPeriod {period}: Real Estate not in optimal portfolios!")
     else:
         print(f"\nPeriod {period}: File not found - {pkl_file}")
 
@@ -106,7 +106,7 @@ for period in periods:
 
     if os.path.exists(returns_file):
         try:
-            log_returns = pd.read_excel(returns_file, sheet_name='Financials')
+            log_returns = pd.read_excel(returns_file, sheet_name='Real Estate')
 
             # Drop Date column
             if 'Date' in log_returns.columns:
@@ -118,7 +118,7 @@ for period in periods:
             total_cells = returns_data.size
             nan_pct = (nan_count / total_cells) * 100 if total_cells > 0 else 0
 
-            print(f"\nPeriod {period} - Financials log returns:")
+            print(f"\nPeriod {period} - Real Estate log returns:")
             print(f"  Shape: {returns_data.shape} (rows x stocks)")
             print(f"  NaN count: {nan_count} ({nan_pct:.2f}%)")
 
@@ -131,7 +131,7 @@ for period in periods:
                 print(f"  ⚠️ WARNING: Very few observations after cleaning!")
 
         except Exception as e:
-            print(f"\nPeriod {period}: Error reading Financials sheet - {e}")
+            print(f"\nPeriod {period}: Error reading Real Estate sheet - {e}")
     else:
         print(f"\nPeriod {period}: File not found - {returns_file}")
 
@@ -144,9 +144,9 @@ for period in periods:
     if os.path.exists(dataset_file):
         data = pd.read_excel(dataset_file)
 
-        fin_data = data[data['GICS Sector'] == 'Financials']
+        fin_data = data[data['GICS Sector'] == 'Real Estate']
 
-        print(f"\nPeriod {period} - Financials in dataset:")
+        print(f"\nPeriod {period} - Real Estate in dataset:")
         print(f"  Number of stocks: {len(fin_data)}")
 
         # Check for NaN in carbon intensity
