@@ -571,7 +571,7 @@ def main():
     flexibility_panel = flexibility_panel.sort_values(["Sector", "Period"])
 
     # Save panel
-    flexibility_panel.to_excel("results/flexibility/sector_flexibility_panel.xlsx", index=False)
+    flexibility_panel.to_excel("results/flexibility/sector_flexibility_raw.xlsx", index=False)
     print("\n✅ Saved all-period flexibility panel.")
 
     # Compute flexibility scores
@@ -585,15 +585,15 @@ def main():
         .apply(build_flexibility_score)
         .reset_index(drop=True)
     )
-
+    scored_panel.to_excel("results/flexibility/sector_flexibility_normalised.xlsx", index=False)
     flexibility_score_df = scored_panel[['Sector', 'Period', 'Flexibility_Score']].drop_duplicates()
 
     # Final validation
     validate_final_results(flexibility_score_df, PERIODS)
 
     # Save flexibility scores
-    flexibility_score_output = "results/flexibility/flexibility_scores.csv"
-    flexibility_score_df.to_csv(flexibility_score_output, index=False)
+    flexibility_score_output = "results/flexibility/flexibility_by_period.xlsx"
+    flexibility_score_df.to_excel(flexibility_score_output, index=False)
     print(f"\n✅ Flexibility scores saved to: {flexibility_score_output}")
 
     # Plot results

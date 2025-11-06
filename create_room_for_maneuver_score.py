@@ -402,7 +402,7 @@ plot_sector_evolution(
     title="Volatility-Adjusted Room for Maneuver Score Evolution by Sector",
     ylabel="Adjusted Room for Maneuver Score"
 )
-print(df_norm)
+
 # Plot 3: Maximum Carbon Reduction at 5% TE
 plot_sector_evolution(
     df,

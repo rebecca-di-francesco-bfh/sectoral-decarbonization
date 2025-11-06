@@ -402,7 +402,7 @@ def main():
     validate_robustness_scores(robust_df)
 
     # Save combined results
-    output_file = "results/robustness/robustness_scores_all_periods.xlsx"
+    output_file = "results/robustness/robustness_scores_by_period.xlsx"
     robust_df.to_excel(output_file, index=False)
     print(f"\n✅ Saved robustness scores to: {output_file}")
 
