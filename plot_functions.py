@@ -3,6 +3,7 @@ import numpy as np
 import os
 import seaborn as sns
 import pandas as pd
+import math
 
 def plot_sector_evolution(
     df,
@@ -281,3 +282,357 @@ def plot_origin_vs_opt_weights_comparison(w_b_vec, w_opt, stock_labels, sector_n
         plt.title(f"{sector_name or 'Sector'} – Portfolio Weights Heatmap", weight='bold')
         plt.tight_layout()
         plt.show()
+
+
+
+import matplotlib.cm as cm
+
+def plot_sector_radar_grid(df, cols_to_norm, title, savepath=None):
+
+    # --- Radar labels ---
+    labels = [
+        "         Room for\n         Maneuver",
+        "\nFlexibility",
+        "Robustness         ",
+        "Sensitivity\n(Inverted)"
+    ]
+    num_vars = len(labels)
+
+    # Radar angles
+    angles = np.linspace(0, 2 * np.pi, num_vars, endpoint=False).tolist()
+    angles += angles[:1]
+
+    # Sort by DRI
+    df_sorted = df.sort_values("DRI", ascending=False).reset_index(drop=True)
+
+    # Grid
+    n_sectors = len(df_sorted)
+    ncols = 3
+    nrows = 4
+
+
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        subplot_kw=dict(polar=True),
+        figsize=(12, 3.3 * nrows)
+    )
+    axes = axes.flatten()
+
+    # Colormap for DRI-based intensity
+    cmap = cm.get_cmap("Blues")   # Stronger = darker
+
+    # --- Plot ---
+    for i, (_, row) in enumerate(df_sorted.iterrows()):
+        ax = axes[i]
+
+        # Values
+        values = row[cols_to_norm].tolist()
+        values += values[:1]
+
+        # Color based on DRI (0 → light, 1 → dark)
+        color = cmap(row["DRI"])
+
+        # Plot + fill
+        ax.plot(angles, values, color=color, linewidth=2)
+        ax.fill(angles, values, color=color, alpha=0.25)
+
+        # Axes
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(labels, fontsize=9, fontweight="medium")
+        ax.set_ylim(0, 1)
+
+        # Radial ticks
+        ax.set_yticks([0.25, 0.5, 0.75, 1.0])
+        ax.set_yticklabels(["0.25", "0.5", "0.75", "1.0"], fontsize=5)
+        ax.yaxis.grid(True, linestyle="--", linewidth=0.5)
+
+        # Title
+        ax.set_title(
+            f"{row['Sector']} ({row['DRI']:.2f})",
+            fontsize=9,
+            fontweight="bold",
+            y=1.12
+        )
+
+    # # Remove unused subplots
+    # for j in range(i + 1, len(axes)):
+    #     fig.delaxes(axes[j])
+
+        # Remove unused subplots
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
+
+    # ----------------------------------------------------------------------
+    # Add colorbar in the empty subplot (Option C)
+    # ----------------------------------------------------------------------
+    if len(axes) > n_sectors:
+        cbar_ax = axes[n_sectors]     # use the first empty cell
+
+        # Create fake scalar mappable for the colorbar
+        norm = plt.Normalize(vmin=df_sorted["DRI"].min(), vmax=df_sorted["DRI"].max())
+        cmap = plt.cm.Blues
+        sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
+        sm.set_array([])
+
+        # Remove polar frame
+        cbar_ax.set_axis_off()
+
+        # Add the colorbar
+        cbar = plt.colorbar(
+            sm,
+            ax=cbar_ax,
+            fraction=0.8,
+            pad=0.1
+        )
+        cbar.ax.set_title("DRI", fontsize=9, pad=6)
+        cbar.ax.tick_params(labelsize=7)
+
+
+    # Title & spacing
+    # plt.suptitle(title, fontsize=14, fontweight="bold", y=1.02)
+
+    # Reduced padding (vertical & horizontal)
+    plt.tight_layout(h_pad=2, w_pad=1)
+    #fig.subplots_adjust(hspace=0.25)
+
+    # Save
+    if savepath is not None:
+        fig.savefig(savepath, dpi=300, bbox_inches="tight")
+
+    plt.show()
+    return fig
+
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+def plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath):
+    """
+    Plot the evolution of the four DRI dimensions over time
+    in a single figure with 4 horizontal subplots.
+    """
+
+    # Consistent sector colors
+    sector_colors = {
+        'Communication Services': '#E63946',
+        'Consumer Discretionary': '#F77F00',
+        'Consumer Staples': '#FCBF49',
+        'Energy': '#06FFA5',
+        'Financials': '#118AB2',
+        'Health Care': '#073B4C',
+        'Industrials': '#8B5A3C',
+        'Information Technology': '#9D4EDD',
+        'Materials': '#6A994E',
+        'Real Estate': '#BC4749',
+        'Utilities': '#264653'
+    }
+
+    def _prep_periods(df, period_col="Period"):
+        order = sorted(df[period_col].unique())
+        df = df.copy()
+        df[period_col] = pd.Categorical(df[period_col], categories=order, ordered=True)
+        return df
+
+    # Ensure periods are ordered
+    room_df_p   = _prep_periods(room_df)
+    flex_df_p   = _prep_periods(flex_df)
+    sens_df_p   = _prep_periods(sens_df)
+    robust_df_p = _prep_periods(robust_df)
+
+    # Create 4 subplots horizontally
+    fig, axes = plt.subplots(
+        nrows=2, ncols=2,
+        figsize=(12, 8),
+        sharex=True
+    )
+
+    def _plot_dimension(ax, df_dim, value_col, title, ylabel):
+
+        df_dim = df_dim.copy()
+
+        # Format periods: 0621 → 06/21
+        df_dim["Period"] = df_dim["Period"].astype(str).str.zfill(4)
+        df_dim["Period"] = df_dim["Period"].apply(lambda x: f"{x[:2]}/{x[2:]}")
+
+        # Order periods
+        period_order = sorted(df_dim["Period"].unique())
+        df_dim["Period"] = pd.Categorical(df_dim["Period"], categories=period_order, ordered=True)
+
+        # Plot
+        for sector, grp in df_dim.groupby("Sector"):
+            ax.plot(
+                grp["Period"],
+                grp[value_col],
+                marker="o",
+                linewidth=2,
+                label=sector,
+                alpha=0.85,
+                color=sector_colors.get(sector, "gray"),
+            )
+
+        ax.set_title(title, fontsize=12, fontweight="bold")
+        ax.set_xlabel("Period")
+        ax.set_ylabel(ylabel)
+        ax.grid(alpha=0.3)
+
+        # ---- rotate xtick labels slightly ----
+        ax.tick_params(axis="x", rotation=30)
+
+
+  
+    # ---- Plot each dimension ----
+    _plot_dimension(
+        axes[0,0],
+        room_df_p,
+        value_col="Room_for_Maneuver_Score",
+        title="Room for Maneuver",
+        ylabel="Score"
+    )
+
+    _plot_dimension(
+        axes[0, 1],
+        flex_df_p,
+        value_col="Flexibility_Score",
+        title="Flexibility",
+        ylabel="Score"
+    )
+
+    _plot_dimension(
+         axes[1, 0],
+        sens_df_p,
+        value_col="Sensitivity_Score",
+        title="Sensitivity (Inverted)",
+        ylabel="Score"
+    )
+
+    _plot_dimension(
+        axes[1,1],
+        robust_df_p,
+        value_col="Robustness_Score",
+        title="Robustness",
+        ylabel="Score"
+    )
+
+    # ---- Single centered legend below all subplots ----
+    handles, labels = axes[1,1].get_legend_handles_labels()
+
+    fig.legend(
+        handles,
+        labels,
+        title="Sector",
+        fontsize=8,
+        title_fontsize=9,
+        loc="lower center",
+        ncol=6,                    # all sectors in one line (adjust if needed)
+        bbox_to_anchor=(0.5, -0.003),   # center, slightly below the figure
+    )
+
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.15)   # give space for the legend
+
+    if savepath is not None:
+        fig.savefig(savepath, dpi=300, bbox_inches="tight")
+    plt.show()
+
+
+    return fig
+
+
+def plot_te_carbon_frontiers_all_periods(portfolio_dir, output_path=None):
+    """
+    Plot TE-Carbon frontiers for all periods in a 6x2 subplot grid.
+
+    Parameters
+    ----------
+    portfolio_dir : str or Path
+        Directory containing pickle files with optimal portfolios
+    output_path : str, optional
+        Path to save the figure as PDF. If None, doesn't save.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+        The generated figure
+    """
+    from pathlib import Path
+    import pickle
+
+    portfolio_dir = Path(portfolio_dir)
+    pickle_files = sorted(portfolio_dir.glob("optimal_portfolios_all_te_*.pkl"))
+
+    # Custom sector order
+    ordered_sectors = [
+        "Industrials",
+        "Financials",
+        "Consumer Discretionary",
+        "Health Care",
+        "Information Technology",
+        "Consumer Staples",
+        "Energy",
+        "Materials",
+        "Real Estate",
+        "Utilities",
+        "Communication Services"
+    ]
+
+    # Sector colors - highly distinguishable on white background
+    sector_colors = {
+        'Communication Services': '#E41A1C',  # Red
+        'Consumer Discretionary': '#FF7F00',  # Orange
+        'Consumer Staples': '#FFD92F',  # Yellow
+        'Energy': '#4DAF4A',  # Green
+        'Financials': '#377EB8',  # Blue
+        'Health Care': '#984EA3',  # Purple
+        'Industrials': '#A65628',  # Brown
+        'Information Technology': '#F781BF',  # Pink
+        'Materials': '#1B9E77',  # Teal
+        'Real Estate': '#D95F02',  # Dark Orange
+        'Utilities': '#666666'  # Dark Grey
+    }
+
+    # Create 6x2 subplots
+    fig, axes = plt.subplots(6, 2, figsize=(16, 24))
+    axes = axes.flatten()
+
+    # Plot each pickle file in a subplot
+    for idx, pickle_file in enumerate(pickle_files):
+        with open(pickle_file, "rb") as f:
+            sector_weights = pickle.load(f)
+
+        # Extract period from filename (e.g., "1223" from "optimal_portfolios_all_te_1223.pkl")
+        period = pickle_file.stem.split("_")[-1]
+        # Format period with slash (e.g., "0621" -> "06/21")
+        formatted_period = f"{period[:2]}/{period[2:]}"
+
+        ax = axes[idx]
+
+        for sector_name in ordered_sectors:
+            if sector_name in sector_weights:
+                metrics = sector_weights[sector_name]
+                ax.plot(metrics['tracking_errors'], metrics['carbon_reductions'],
+                       label=sector_name, color=sector_colors[sector_name])
+
+        ax.set_xlabel('Tracking Error (bps)')
+        ax.set_ylabel('Carbon Reduction (%)')
+        ax.set_title(f'Period {formatted_period}')
+        ax.grid(True)
+
+    # Hide any unused subplots
+    for idx in range(len(pickle_files), len(axes)):
+        axes[idx].set_visible(False)
+
+    # Create single legend below the subplots
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(handles, labels, title="Sectors", loc='lower center', ncol=6, bbox_to_anchor=(0.5, -0.02))
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.05)  # Make room for the legend
+
+    # Save as high-quality PDF for LaTeX/Overleaf
+    if output_path is not None:
+        plt.savefig(output_path, dpi=300, bbox_inches='tight', format='pdf')
+        print(f"Figure saved to: {output_path}")
+
+    return fig

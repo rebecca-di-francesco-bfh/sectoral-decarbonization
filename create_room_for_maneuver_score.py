@@ -255,6 +255,13 @@ def _minmax(x):
 
     return (x - lo) / (hi - lo) if hi > lo else np.zeros_like(x)
 
+# within period normalization 0-1
+def norm(x):
+    x = pd.to_numeric(x, errors='coerce')
+    x_min, x_max = np.nanmin(x), np.nanmax(x)
+    if x_max - x_min == 0:
+        return pd.Series(0.5, index=x.index)
+    return (x - x_min) / (x_max - x_min)
 
 # =============================================================================
 # STEP 4: COMPUTE METRICS FOR ALL SECTORS AND PERIODS
@@ -330,7 +337,7 @@ print(df.head(10))
 # STEP 5: SAVE RESULTS
 # =============================================================================
 
-output_file = "results/room_for_maneuver_metrics.csv"
+output_file = "results/room_for_maneuver/room_for_maneuver_metrics.csv"
 df.to_csv(output_file, index=False)
 print(f"\n✓ Results saved to: {output_file}")
 
@@ -375,10 +382,7 @@ df_norm["Room_for_Maneuver_Score_Adjusted"] = (
 
 print(f"✓ Room for Maneuver Score computed for all sectors and periods\n")
 
-# Save the normalized dataframe with scores
-output_file_scores = "results/room_for_maneuver_scores.csv"
-df_norm.to_csv(output_file_scores, index=False)
-print(f"✓ Scores saved to: {output_file_scores}")
+
 
 
 # =============================================================================
@@ -387,28 +391,70 @@ print(f"✓ Scores saved to: {output_file_scores}")
 
 print("\nGenerating plots...")
 
-# Plot 1: Raw Room for Maneuver Score
-plot_sector_evolution(
-    df_norm,
-    value_col="Room_for_Maneuver_Score",
-    title="Room for Maneuver Score Evolution by Sector",
-    ylabel="Room for Maneuver Score (0-1)"
-)
+# # Plot 1: Raw Room for Maneuver Score
+# plot_sector_evolution(
+#     df_norm,
+#     value_col="Room_for_Maneuver_Score",
+#     title="Room for Maneuver Score Evolution by Sector",
+#     ylabel="Room for Maneuver Score (0-1)"
+# )
 
-# Plot 2: Volatility-Adjusted Room for Maneuver Score
-plot_sector_evolution(
-    df_norm,
-    value_col="Room_for_Maneuver_Score_Adjusted",
-    title="Volatility-Adjusted Room for Maneuver Score Evolution by Sector",
-    ylabel="Adjusted Room for Maneuver Score"
-)
+# # Plot 2: Volatility-Adjusted Room for Maneuver Score
+# plot_sector_evolution(
+#     df_norm,
+#     value_col="Room_for_Maneuver_Score_Adjusted",
+#     title="Volatility-Adjusted Room for Maneuver Score Evolution by Sector",
+#     ylabel="Adjusted Room for Maneuver Score"
+# )
 
-# Plot 3: Maximum Carbon Reduction at 5% TE
-plot_sector_evolution(
-    df,
-    value_col="MaxCut_at_5pctTE",
-    title="Maximum Carbon Reduction at 5% Tracking Error",
-    ylabel="Carbon Reduction (%)"
-)
+
 
 print("\n✓ Script completed successfully")
+# Save the normalized dataframe with scores
+output_file_scores = "results/room_for_maneuver/room_for_maneuver_scores_by_period.xlsx"
+
+
+
+df_norm["Room_for_Maneuver_Score"] = df_norm['Room_for_Maneuver_Score_Adjusted']
+# Sort by period
+PERIODS = {
+    "0321": "Mar 2021",
+    "0621": "Jun 2021",
+    "0921": "Sep 2021",
+    "1221": "Dec 2021",
+    "0322": "Mar 2022",
+    "0622": "Jun 2022",
+    "0922": "Sep 2022",
+    "1222": "Dec 2022",
+    "0323": "Mar 2023",
+    "0623": "Jun 2023",
+    "0923": "Sep 2023",
+    "1223": "Dec 2023"
+}
+
+period_order = list(PERIODS.keys())
+df_norm["Period"] = pd.Categorical(
+    df_norm["Period"], categories=period_order, ordered=True
+)
+df_norm = df_norm.sort_values(["Sector", "Period"])
+
+def normalize_within_period(df_norm):
+    df_norm['Room_for_Maneuver_Score'] = norm(df_norm['Room_for_Maneuver_Score'])
+    return df_norm
+
+scored_panel = (
+        df_norm
+        .groupby("Period", group_keys=False, observed=True)
+        .apply(normalize_within_period)
+        .reset_index(drop=True)
+    )
+print(scored_panel)
+
+# Plot 3: Normalized 
+plot_sector_evolution(
+    scored_panel,
+    value_col="Room_for_Maneuver_Score",
+    title="Normalized Volatility-Adjusted Room for Maneuver Score Evolution by Sector",
+    ylabel="Room_for_Maneuver_Score"
+)
+scored_panel[['Sector', 'Period', 'Room_for_Maneuver_Score']].to_excel(output_file_scores, index=False)

@@ -26,7 +26,7 @@ from plot_functions import plot_sector_evolution
 # =============================================================================
 
 # Target tracking error in basis points
-TARGET_TE_BPS = 200
+TARGET_TE_BPS = 500
 
 # Trading days per year for annualization
 TRADING_DAYS_PER_YEAR = 252
@@ -87,12 +87,13 @@ def compute_tracking_error(r_b, r_d):
     """
     # Active returns
     active = r_d - r_b
-
+    TE_3m = active.std() * np.sqrt(len(active))
+    return TE_3m
     # Daily TE → annualized
-    te_daily = active.std()
-    te_ann = te_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
+    # te_daily = active.std()
+    # te_ann = te_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
 
-    return te_ann
+    #return te_ann
 
 
 def process_sector(sector, period, benchmark_return_index_period, optimal_portfolios_all_te):
@@ -149,6 +150,7 @@ def process_sector(sector, period, benchmark_return_index_period, optimal_portfo
 
     # Align time indices
     common_idx = r_b.index.intersection(r_d.index)
+
     r_b, r_d = r_b.loc[common_idx], r_d.loc[common_idx]
 
     if len(common_idx) == 0:

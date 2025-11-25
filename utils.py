@@ -82,6 +82,7 @@ def extract_optimal_portfolios_at_target_te(optimal_portfolios_all_te, target_te
         # find index of TE closest to target
         idx_closest = np.argmin(np.abs(te_list - target_te_bps))
         te_closest = te_list[idx_closest]
+        
         w_opt = weights_list[idx_closest]
 
         optimal_portfolios_target_TE[sector] = {

@@ -786,7 +786,7 @@ class DatasetCreator:
             'Revenue',
             'Scope 1 Imputed', 'Scope 2 Imputed', 'Scope 3 Imputed', 
             'Filled Scope 1 Count', 'Filled Scope 2 Count', 'Filled Scope 3 Count',
-            'Carbon Intensity', 'weight_in_sector', 'TYPE'
+            'Carbon Intensity', 'weight_in_sector', 'TYPE', 'float_mcap'
         ]].copy()
 
         # Sort by sector and weight

@@ -592,7 +592,7 @@ def main():
     validate_final_results(flexibility_score_df, PERIODS)
 
     # Save flexibility scores
-    flexibility_score_output = "results/flexibility/flexibility_by_period.xlsx"
+    flexibility_score_output = "results/flexibility/flexibility_scores_by_period.xlsx"
     flexibility_score_df.to_excel(flexibility_score_output, index=False)
     print(f"\n✅ Flexibility scores saved to: {flexibility_score_output}")
 
