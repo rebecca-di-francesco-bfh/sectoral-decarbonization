@@ -26,7 +26,7 @@ from plot_functions import plot_sector_evolution
 # =============================================================================
 
 # Target tracking error in basis points
-TARGET_TE_BPS = 500
+TARGET_TE_BPS = 200
 
 # Trading days per year for annualization
 TRADING_DAYS_PER_YEAR = 252
@@ -87,13 +87,12 @@ def compute_tracking_error(r_b, r_d):
     """
     # Active returns
     active = r_d - r_b
-    TE_3m = active.std() * np.sqrt(len(active))
-    return TE_3m
-    # Daily TE → annualized
-    # te_daily = active.std()
-    # te_ann = te_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
+  
+    #Daily TE → annualized
+    te_daily = active.std()
+    te_ann = te_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
 
-    #return te_ann
+    return te_ann
 
 
 def process_sector(sector, period, benchmark_return_index_period, optimal_portfolios_all_te):
@@ -245,11 +244,20 @@ def process_period(period, benchmark_sectors_daily_returns, sector_annualized_vo
         print(f"   Skipping period {period}\n")
         return None
 
-    # Compute robustness ratio (TE / Volatility)
-    merged["Robustness_Ratio"] = merged["annualized_TE"] / merged["annualized_volatility"]
+    # ---- Soft volatility adjustment ----
+    alpha = 0.5   # Softening exponent
 
-    # Convert to intuitive robustness score (higher = more robust)
-    merged["Robustness_Score"] = 1 / (1 + merged["Robustness_Ratio"])
+    merged["Robustness_Ratio"] = merged["annualized_TE"] / (
+        merged["annualized_volatility"] ** alpha
+    )
+
+    # ---- Within-period min-max normalization (1 = most robust) ----
+    ratio_max = merged["Robustness_Ratio"].max()
+    ratio_min = merged["Robustness_Ratio"].min()
+
+    merged["Robustness_Score"] = (ratio_max - merged["Robustness_Ratio"]) / (
+        ratio_max - ratio_min
+    )
 
     print(f"   ✅ Computed robustness scores for {len(merged)} sectors")
 
@@ -337,7 +345,17 @@ def plot_robustness_metrics(robust_df_plot):
         figsize=(12, 7)
     )
 
-    # Plot 3: Robustness Score
+    # Plot 3: Unnormalized Robustness Score
+    print("📊 Plotting Robustness Score Ratio...")
+    plot_sector_evolution(
+        df=robust_df_plot,
+        value_col='Robustness_Ratio',
+        title='Robustness Ratio Evolution by Sector (2021-2023)',
+        ylabel='Robustness Ratio Score (Higher = More Robust)',
+        figsize=(12, 7)
+    )
+
+    # Plot 4: Normalized Robustness Score
     print("📊 Plotting Robustness Score...")
     plot_sector_evolution(
         df=robust_df_plot,
