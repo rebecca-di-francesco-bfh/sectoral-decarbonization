@@ -31,7 +31,7 @@ sens_df = pd.read_excel("results/sensitivity/sensitivity_scores_by_period.xlsx")
 # Expected columns: ["Sector", "Period", "Sensitivity_Score"]
 
 # --- Robustness ---
-robust_df = pd.read_excel("results/robustness/robustness_scores_by_period_within_norm.xlsx")
+robust_df = pd.read_excel("results/robustness/robustness_scores_by_period.xlsx")
 # Expected columns: ["sector", "period", "Robustness_Score"]
 robust_df = robust_df.rename(columns={"sector": "Sector", "period": "Period"})
 
