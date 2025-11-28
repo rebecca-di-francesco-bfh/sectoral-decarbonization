@@ -65,6 +65,29 @@ def sigma_shrink_fn(R_clean):
     # Ensure PSD property
     return nearest_psd(Sigma_reg), lw.shrinkage_
 
+def sigma_shrink_fn_capped(R_clean, max_alpha=0.2):
+    """
+    Compute covariance with Ledoit-Wolf shrinkage but cap shrinkage intensity.
+    """
+
+    # Fit Ledoit-Wolf to get sample stats
+    lw = LedoitWolf().fit(R_clean)
+    S = lw.covariance_                       # empirical covariance
+    alpha_raw = lw.shrinkage_                # Ledoit–Wolf estimated shrinkage
+    alpha = min(alpha_raw, max_alpha)        # cap shrinkage
+
+    # Build Ledoit-Wolf shrinkage target (scaled identity)
+    avg_var = np.trace(S) / S.shape[0]
+    T = avg_var * np.eye(S.shape[0])
+
+    # Apply capped shrinkage
+    Sigma_shrink = alpha * T + (1 - alpha) * S
+
+    # Regularization for numerical stability
+    Sigma_reg = Sigma_shrink + 1e-5 * np.eye(S.shape[0])
+
+    return nearest_psd(Sigma_reg), alpha
+
 def extract_optimal_portfolios_at_target_te(optimal_portfolios_all_te, target_te_bps=200):
     """
     Extracts the portfolio weights and carbon reduction levels closest to the target TE (bps)
