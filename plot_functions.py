@@ -61,8 +61,9 @@ def plot_sector_evolution(
         'Information Technology': '#9D4EDD',      # Purple
         'Materials': '#6A994E',                   # Olive Green
         'Real Estate': '#BC4749',                 # Burgundy
-        'Utilities': '#264653'                    # Navy
+        'Utilities': '#808080'                    # Gray
     }
+
 
     # Create plot
     fig, ax = plt.subplots(figsize=figsize)
@@ -415,18 +416,19 @@ def plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath)
 
     # Consistent sector colors
     sector_colors = {
-        'Communication Services': '#E63946',
-        'Consumer Discretionary': '#F77F00',
-        'Consumer Staples': '#FCBF49',
-        'Energy': '#06FFA5',
-        'Financials': '#118AB2',
-        'Health Care': '#073B4C',
-        'Industrials': '#8B5A3C',
-        'Information Technology': '#9D4EDD',
-        'Materials': '#6A994E',
-        'Real Estate': '#BC4749',
-        'Utilities': '#264653'
-    }
+    'Communication Services': '#E63946',      # Red
+    'Consumer Discretionary': '#F77F00',      # Orange
+    'Consumer Staples': '#FCBF49',            # Yellow
+    'Energy': '#06FFA5',                      # Mint Green
+    'Financials': '#118AB2',                  # Blue
+    'Health Care': '#073B4C',                 # Dark Blue
+    'Industrials': '#8B5A3C',                 # Brown
+    'Information Technology': '#9D4EDD',      # Purple
+    'Materials': '#6A994E',                   # Olive Green
+    'Real Estate': '#BC4749',                 # Burgundy
+    'Utilities': '#808080'                    # Gray
+}
+
 
     def _prep_periods(df, period_col="Period"):
         order = sorted(df[period_col].unique())
@@ -579,18 +581,19 @@ def plot_te_carbon_frontiers_all_periods(portfolio_dir, output_path=None):
 
     # Sector colors - highly distinguishable on white background
     sector_colors = {
-        'Communication Services': '#E41A1C',  # Red
-        'Consumer Discretionary': '#FF7F00',  # Orange
-        'Consumer Staples': '#FFD92F',  # Yellow
-        'Energy': '#4DAF4A',  # Green
-        'Financials': '#377EB8',  # Blue
-        'Health Care': '#984EA3',  # Purple
-        'Industrials': '#A65628',  # Brown
-        'Information Technology': '#F781BF',  # Pink
-        'Materials': '#1B9E77',  # Teal
-        'Real Estate': '#D95F02',  # Dark Orange
-        'Utilities': '#666666'  # Dark Grey
-    }
+    'Communication Services': '#E63946',      # Red
+    'Consumer Discretionary': '#F77F00',      # Orange
+    'Consumer Staples': '#FCBF49',            # Yellow
+    'Energy': '#06FFA5',                      # Mint Green
+    'Financials': '#118AB2',                  # Blue
+    'Health Care': '#073B4C',                 # Dark Blue
+    'Industrials': '#8B5A3C',                 # Brown
+    'Information Technology': '#9D4EDD',      # Purple
+    'Materials': '#6A994E',                   # Olive Green
+    'Real Estate': '#BC4749',                 # Burgundy
+    'Utilities': '#808080'                    # Gray
+}
+
 
     # Create 6x2 subplots
     fig, axes = plt.subplots(6, 2, figsize=(16, 24))
