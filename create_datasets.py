@@ -574,7 +574,7 @@ class DatasetCreator:
         gics = pd.get_dummies(gics, columns=['GICS Sector'], prefix='Sector', drop_first=False)
 
         # Define columns for imputation
-        columns = ["Scope 1", "Scope 2", "Scope 3", "Revenue", "float_mcap", "Carbon Intensity"]
+        columns = ["Scope 1", "Scope 2", "Scope 3", "Revenue", "float_mcap"]
         sector_columns = [col for col in gics.columns if col.startswith("Sector_")]
         all_cols = columns + sector_columns
 

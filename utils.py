@@ -1,5 +1,6 @@
 import numpy as np
 from sklearn.covariance import LedoitWolf
+import cvxpy as cp
 
 def nearest_psd(A):
     """
@@ -119,3 +120,25 @@ def extract_optimal_portfolios_at_target_te(optimal_portfolios_all_te, target_te
         }
 
     return optimal_portfolios_target_TE
+
+def solve_qp_with_fallback(prob):
+    # 1. Try MOSEK strict
+    try:
+        prob.solve(solver=cp.MOSEK, verbose=False)
+        if prob.status in ("optimal", "optimal_inaccurate"):
+            return
+    except:
+        pass
+
+    # 2. Try MOSEK relaxed
+    try:
+        prob.solve(
+        solver=cp.MOSEK,
+        verbose=False,
+        **{"mosek_params": {"MSK_DPAR_INTPNT_TOL_REL_GAP": 1e-4}}
+        )
+
+        if prob.status in ("optimal", "optimal_inaccurate"):
+            return
+    except:
+        pass

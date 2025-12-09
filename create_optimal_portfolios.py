@@ -124,20 +124,22 @@ def run_sector_optimisation(sector_name, sector, R, cov_type="raw", cache_dir="c
         # Objective: Minimize portfolio carbon intensity
         prob = cp.Problem(cp.Minimize(c_vec @ w), constraints)
 
-        # Solve the optimization problem - try ECOS first
-        prob.solve(solver=cp.ECOS, verbose=False)
+     # Solve with MOSEK
+        prob.solve(solver=cp.MOSEK, verbose=False)
 
-        # If solution is inaccurate, try SCS solver (more robust but slower)
-        if prob.status == "optimal_inaccurate":
-            print(f"    [{sector_name} - {cov_type}] ECOS inaccurate at TE={te_annual*100:.2f}%, trying SCS solver...")
+        # Check status
+        if prob.status not in ["optimal", "optimal_inaccurate"]:
+            print(f"    [{sector_name} - {cov_type}] MOSEK failed ({prob.status}), trying SCS...")
+
+            # Try fallback solver when MOSEK fails completely
             prob.solve(solver=cp.SCS, verbose=False, eps=1e-5)
-            if prob.status == "optimal":
-                print(f"    [{sector_name} - {cov_type}] SCS solved successfully")
 
-        # Check if solution is valid
-        if prob.status not in ["optimal", "optimal_inaccurate"] or w.value is None:
-            print(f"    [{sector_name} - {cov_type}] No solution found at TE={te_annual*100:.2f}% (status: {prob.status})")
-            continue  # Skip this TE level if no solution found
+            if prob.status not in ["optimal", "optimal_inaccurate"]:
+                print(f"    [{sector_name} - {cov_type}] No solution found even with SCS.")
+                continue
+            else:
+                print(f"    [{sector_name} - {cov_type}] SCS solved successfully.")
+
 
         # Extract optimal weights
         w_opt = w.value
@@ -255,9 +257,9 @@ def run_period(period_tag):
         sector = data[data['GICS Sector'] == sector_name]
         R = log_returns_all[sector_name]
 
-        # Run optimization with raw covariance
-        res_raw = run_sector_optimisation(sector_name, sector, R, cov_type="raw", cache_dir=cache_dir)
-        results.append(res_raw)
+        # # Run optimization with raw covariance
+        # res_raw = run_sector_optimisation(sector_name, sector, R, cov_type="raw", cache_dir=cache_dir)
+        # results.append(res_raw)
 
         # Run optimization with shrunk covariance (Ledoit-Wolf)
         res_shrink = run_sector_optimisation(sector_name, sector, R, cov_type="shrink", cache_dir=cache_dir)

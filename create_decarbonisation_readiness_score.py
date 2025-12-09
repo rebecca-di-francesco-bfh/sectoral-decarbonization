@@ -117,10 +117,9 @@ print("✅ Saved DRI results to results/DRI/decarbonization_readiness_index.xlsx
 print("\n🏆 Top 5 sectors by DRI:")
 print(final_df.sort_values("DRI", ascending=False).head())
 
-cols = [
-    "Room_norm",
+cols = [  "Sens_norm",
     "Flex_norm",
-    "Sens_norm",
+    "Room_norm",
     "Robust_norm"]
 
 plot_sector_radar_grid(
@@ -130,3 +129,24 @@ plot_sector_radar_grid(
     savepath="results/DRI/dri_radar_profiles.pdf"
 )
 
+import pickle
+
+# ---------------------------------------------------------
+# 7. CREATE RADAR DATA STRUCTURE FOR STREAMLIT
+# ---------------------------------------------------------
+
+radar_dict = {}
+
+for _, row in final_df.iterrows():
+    radar_dict[row["Sector"]] = {
+        "Room for Maneuver": float(row["Room_norm"]),
+        "Flexibility": float(row["Flex_norm"]),
+        "Sensitivity": float(row["Sens_norm"]),
+        "Robustness": float(row["Robust_norm"]),
+    }
+
+# Save pickle for the Streamlit dashboard
+with open("results/DRI/dri_radar_data.pkl", "wb") as f:
+    pickle.dump(radar_dict, f)
+
+print("✅ Saved radar data to Data/dri_radar_data.pkl")

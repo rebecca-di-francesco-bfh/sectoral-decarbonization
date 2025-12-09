@@ -17,12 +17,15 @@ import cvxpy as cp
 from joblib import Parallel, delayed
 from utils import sigma_shrink_fn, extract_optimal_portfolios_at_target_te
 from plot_functions import plot_sector_evolution
-
+from utils import solve_qp_with_fallback
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-
+def minmax_norm_grouped(df, col):
+    return df.groupby("Period")[col].transform(
+        lambda x: (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0
+    )
 # Optimization parameters
 EPS = 0.02
 DELTA_R = 1e-3
@@ -30,11 +33,6 @@ DELTA_TE = 1e-8
 K_DIRS = 500
 NO_IMPROVE_PATIENCE = 40
 ZERO_TOL = 1e-10
-
-# Solver options
-ECOS_OPTS = dict(abstol=1e-6, reltol=1e-6, feastol=1e-6, verbose=False)
-SCS_OPTS = dict(eps=5e-4, max_iters=5000, verbose=False, acceleration_lookback=20)
-USE_SCS_FALLBACK = True
 
 # Period definitions
 PERIODS = {
@@ -119,19 +117,21 @@ def process_sector(sector_name, info, data, log_returns_all):
         # Max w_i
         w = cp.Variable(N)
         prob_max = cp.Problem(cp.Maximize(w[i]), eps_constraints(w))
-        prob_max.solve(solver=cp.ECOS, **ECOS_OPTS)
-        if (w.value is None or prob_max.status not in ("optimal", "optimal_inaccurate")) and USE_SCS_FALLBACK:
-            prob_max.solve(solver=cp.SCS, **SCS_OPTS)
-        w_max = w.value[i] if w.value is not None else np.nan
+        solve_qp_with_fallback(prob_max)
+        if prob_max.status not in ("optimal", "optimal_inaccurate"):
+            w_max = np.nan
+        else:
+            w_max = float(w.value[i])
+
 
         # Min w_i
         w = cp.Variable(N)
         prob_min = cp.Problem(cp.Minimize(w[i]), eps_constraints(w))
-        prob_min.solve(solver=cp.ECOS, **ECOS_OPTS)
-        if (w.value is None or prob_min.status not in ("optimal", "optimal_inaccurate")) and USE_SCS_FALLBACK:
-            prob_min.solve(solver=cp.SCS, **SCS_OPTS)
-        w_min = w.value[i] if w.value is not None else np.nan
-
+        solve_qp_with_fallback(prob_min)
+        if prob_min.status not in ("optimal", "optimal_inaccurate"):
+            w_min = np.nan
+        else:
+            w_min = float(w.value[i])
         # Hygiene
         if (not np.isfinite(w_min)) or (w_min < ZERO_TOL): w_min = 0.0
         if (not np.isfinite(w_max)) or (w_max < ZERO_TOL): w_max = 0.0
@@ -176,16 +176,12 @@ def process_sector(sector_name, info, data, log_returns_all):
 
         # max v^T w
         v.value = vv
-        prob_dir.solve(solver=cp.ECOS, **ECOS_OPTS)
-        if (w.value is None or prob_dir.status not in ("optimal", "optimal_inaccurate")) and USE_SCS_FALLBACK:
-            prob_dir.solve(solver=cp.SCS, **SCS_OPTS)
+        solve_qp_with_fallback(prob_dir)
         cand1 = abs(float(vv @ (w.value - w_opt))) if (w.value is not None) else 0.0
 
         # max (-v)^T w
         v.value = -vv
-        prob_dir.solve(solver=cp.ECOS, **ECOS_OPTS)
-        if (w.value is None or prob_dir.status not in ("optimal", "optimal_inaccurate")) and USE_SCS_FALLBACK:
-            prob_dir.solve(solver=cp.SCS, **SCS_OPTS)
+        solve_qp_with_fallback(prob_dir)
         cand2 = abs(float((-vv) @ (w.value - w_opt))) if (w.value is not None) else 0.0
 
         new_best = max(best_lb, cand1, cand2)
@@ -593,6 +589,7 @@ def main():
 
     # Save flexibility scores
     flexibility_score_output = "results/flexibility/flexibility_scores_by_period.xlsx"
+    flexibility_score_df['Flexibility_Score'] = minmax_norm_grouped(flexibility_score_df, "Flexibility_Score")
     flexibility_score_df.to_excel(flexibility_score_output, index=False)
     print(f"\n✅ Flexibility scores saved to: {flexibility_score_output}")
 

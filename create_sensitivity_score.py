@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 import cvxpy as cp
 from sklearn.covariance import LedoitWolf
-from utils import extract_optimal_portfolios_at_target_te
+from utils import extract_optimal_portfolios_at_target_te, solve_qp_with_fallback
 import matplotlib.pyplot as plt
 
 # =============================================================================
@@ -128,7 +128,7 @@ def baseline_diagnostics(R_clean, w_bench, c_vec, Sigma_fn, te_cap=0.02, w_opt=N
         obj = cp.Minimize(cp.sum(cp.multiply(w, c_vec)))
         cons = [tracking_error <= te_cap_var_monthly, cp.sum(w) == 1, w >= 0]
         prob = cp.Problem(obj, cons)
-        prob.solve(solver=cp.ECOS, verbose=False)
+        solve_qp_with_fallback(prob)
         if prob.status not in ("optimal","optimal_inaccurate") or w.value is None:
             raise RuntimeError(f"Baseline optimization failed: {prob.status}")
         w_opt0 = w.value
@@ -156,31 +156,6 @@ def bootstrap_returns(R_clean_np, n_trials):
     T = R_clean_np.shape[0]
     return [R_clean_np[np.random.choice(T, T, replace=True)] for _ in range(n_trials)]
 
-def compute_perturbed_weights_from_samples(R_samples, w_bench, c_vec, Sigma_fn, te_cap=0.03):
-    weights, tracking_errors = [], []
-    te_cap_var_monthly = (te_cap / np.sqrt(12)) ** 2
-    N = len(w_bench)
-
-    for R_perturbed in R_samples:
-        Sigma = Sigma_fn(pd.DataFrame(R_perturbed))
-        w = cp.Variable(N)
-        tracking_error = cp.quad_form(w - w_bench, cp.psd_wrap(Sigma))
-        constraints = [tracking_error <= te_cap_var_monthly, cp.sum(w) == 1, w >= 0]
-        objective = cp.Minimize(cp.sum(cp.multiply(w, c_vec)))
-        prob = cp.Problem(objective, constraints)
-        prob.solve(solver=cp.ECOS, verbose=False)
-
-        if w.value is not None and prob.status in ["optimal", "optimal_inaccurate"]:
-            weights.append(w.value)
-            diff = w.value - w_bench
-            te_real = np.sqrt(diff.T @ Sigma @ diff) * np.sqrt(12)
-            tracking_errors.append(te_real)
-        else:
-            weights.append(np.full(N, np.nan))
-            tracking_errors.append(np.nan)
-
-    return np.array(weights), np.array(tracking_errors)
-
 def compute_perturbed_weights(
     R_clean,
     w_bench,
@@ -189,7 +164,8 @@ def compute_perturbed_weights(
     te_cap=0.03,
     n_trials=100,
     noise_std=0.01,
-    noise_type="multiplicative"  # or "additive"
+    noise_type="multiplicative",
+    alpha=0.2
 ):
     N = R_clean.shape[1]
     te_cap_var_monthly = (te_cap / np.sqrt(12)) ** 2
@@ -198,12 +174,16 @@ def compute_perturbed_weights(
 
     for seed in range(n_trials):
         np.random.seed(seed)
-        noise = np.random.normal(0, noise_std, R_clean.shape)
 
         if noise_type == "multiplicative":
+            noise = np.random.normal(0, noise_std, R_clean.shape)
             R_perturbed = R_clean + R_clean.multiply(noise)
+
         elif noise_type == "additive":
-            R_perturbed = R_clean + noise
+            sigma = R_clean.std(axis=0).values.reshape(1, -1)
+            noise = np.random.normal(0, 1, R_clean.shape)
+            R_perturbed = R_clean + alpha * noise * sigma
+
         else:
             raise ValueError("noise_type must be 'multiplicative' or 'additive'")
 
@@ -214,9 +194,9 @@ def compute_perturbed_weights(
         constraints = [tracking_error <= te_cap_var_monthly, cp.sum(w) == 1, w >= 0]
         objective = cp.Minimize(cp.sum(cp.multiply(w, c_vec)))
         prob = cp.Problem(objective, constraints)
-        prob.solve(solver=cp.ECOS, verbose=False)
+        solve_qp_with_fallback(prob)
 
-        if w.value is not None and prob.status in ["optimal", "optimal_inaccurate"]:
+        if w.value is not None and prob.status in ("optimal", "optimal_inaccurate"):
             weights.append(w.value)
             diff = w.value - w_bench
             te_real = np.sqrt(diff.T @ Sigma @ diff) * np.sqrt(12)
@@ -311,7 +291,7 @@ for period_tag in periods:
             te_cap=0.02,  # annual TE cap
             n_trials=n_trials,
             noise_std=0.2,
-            noise_type="multiplicative",
+            noise_type="additive",
         )
 
         # === Compute KPIs ===
@@ -377,14 +357,16 @@ df["Outcome_Sensitivity"] = 0.5 * (
     df["CarbonLoss_norm"] + df["TEdrift_norm"]
 )
 
-# --- overall sensitivity ---
-df["Sensitivity_Score_raw"] = 0.5 * (
-    df.groupby("Period")["Composition_Sensitivity"].transform(lambda x: (x - x.min()) / (x.max() - x.min())) +
-    df.groupby("Period")["Outcome_Sensitivity"].transform(lambda x: (x - x.min()) / (x.max() - x.min()))
-)
+
+# df["Sensitivity_Score_raw"] = 1/3 * (
+#     df.groupby("Period")["Composition_Sensitivity"].transform(lambda x: (x - x.min()) / (x.max() - x.min())) +
+#     df.groupby("Period")["Outcome_Sensitivity"].transform(lambda x: (x - x.min()) / (x.max() - x.min()))
+# )
+df["Sensitivity_Score_raw"] =1/3 * (
+    df["Turnover_norm"] +  df["Cosine_norm"] +  df["CarbonLoss_norm"])
 
 df["Sensitivity_Score"] = 1 - df["Sensitivity_Score_raw"]
-
+df["Sensitivity_Score"] = minmax_norm_grouped(df, 'Sensitivity_Score')
 # --- save and plot ---
 df.to_excel("results/sensitivity/sensitivity_scores_by_period.xlsx", index=False)
 print("✅ Saved sensitivity scores to results/sensitivity/sensitivity_scores_by_period.xlsx")
@@ -392,12 +374,39 @@ print("✅ Saved sensitivity scores to results/sensitivity/sensitivity_scores_by
 # --- plot sensitivity score evolution ---
 from plot_functions import plot_sector_evolution
 
+
+
+
+print("✅ Plotted sensitivity score evolution")
+
 plot_sector_evolution(
     df=df,
-    value_col="Sensitivity_Score",
-    title="Inverted Sensitivity Score Evolution Across Periods",
+    value_col="Median_Turnover_pct",
+    title="Median_Turnover_pct Across Periods",
+    ylabel="Median_Turnover_pct",
+    figsize=(12, 7)
+)
+
+plot_sector_evolution(
+    df=df,
+    value_col="Inv_Median_Cosine",
+    title="Inv_Median_Cosine Across Periods",
+    ylabel="Inv_Median_Cosine",
+    figsize=(12, 7)
+)
+
+plot_sector_evolution(
+    df=df,
+    value_col="P95_CarbonLoss_pp",
+    title="Carbon loss Evolution Across Periods",
     ylabel="Inverted Sensitivity Score",
     figsize=(12, 7)
 )
 
-print("✅ Plotted sensitivity score evolution")
+plot_sector_evolution(
+    df=df,
+    value_col="Sensitivity_Score",
+    title="Sensitivtiy Score Across Periods",
+    ylabel="Sensitivity Score",
+    figsize=(12, 7)
+)

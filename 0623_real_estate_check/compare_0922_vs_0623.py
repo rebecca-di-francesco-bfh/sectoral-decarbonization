@@ -24,7 +24,7 @@ periods = ['0922', '0623']
 data_by_period = {}
 
 for period in periods:
-    dataset_file = f"Data/datasets/benchmark_weights_carbon_intensity_{period}.xlsx"
+    dataset_file = f"../Data/Datasets/benchmark_weights_carbon_intensity_{period}.xlsx"
 
     try:
         df = pd.read_excel(dataset_file)
@@ -81,7 +81,7 @@ if '0922' in data_by_period and '0623' in data_by_period:
             # Get volatility data from 0922 if available
             vols_0922_dict = {}
             try:
-                returns_file_0922 = f"Data/log_returns/sector_log_returns_comp_0922.xlsx"
+                returns_file_0922 = f"../Data/log_returns/sector_log_returns_comp_0922.xlsx"
                 log_returns_0922 = pd.read_excel(returns_file_0922, sheet_name='Real Estate')
                 if 'Date' in log_returns_0922.columns:
                     returns_clean_0922 = log_returns_0922.drop(columns=['Date']).dropna()
@@ -151,7 +151,7 @@ if '0922' in data_by_period and '0623' in data_by_period:
             # Get volatility data from 0623 if available
             vols_0623_dict = {}
             try:
-                returns_file_0623 = f"Data/log_returns/sector_log_returns_comp_0623.xlsx"
+                returns_file_0623 = f"../Data/log_returns/sector_log_returns_comp_0623.xlsx"
                 log_returns_0623 = pd.read_excel(returns_file_0623, sheet_name='Real Estate')
                 if 'Date' in log_returns_0623.columns:
                     returns_clean_0623 = log_returns_0623.drop(columns=['Date']).dropna()
@@ -256,6 +256,15 @@ if '0922' in data_by_period and '0623' in data_by_period:
                         print(f"    Actual weight: {top_weight:.4f} ({top_weight*100:.1f}%)")
                         print(f"    Avg carbon intensity: {top_avg_carbon:.2f} (sector: {sector_avg_carbon:.2f})")
                         print(f"    Carbon contribution: {pct_carbon_from_top:.1f}% of sector's total carbon")
+                  
+                        print("    Top constituents:")
+                        print("      Ticker      Weight      CarbonIntensity")
+                        for idx, row in top_stocks.iterrows():
+                            ticker = row.get('SYMBOL', 'N/A')
+                            w = row['weight_in_sector']
+                            c = row['Carbon Intensity']
+                            print(f"      {ticker:<10}  {w:>8.4f}     {c:>8.2f}")
+                        print()
 
                         if top_avg_carbon > sector_avg_carbon * 1.1:
                             print(f"    ⚠️  Top stocks are MORE carbon-intensive (+{((top_avg_carbon/sector_avg_carbon - 1)*100):.1f}%)")
@@ -352,7 +361,7 @@ stock_volatilities = {}
 returns_matrices = {}
 
 for period in periods:
-    returns_file = f"Data/log_returns/sector_log_returns_comp_{period}.xlsx"
+    returns_file = f"../Data/log_returns/sector_log_returns_comp_{period}.xlsx"
 
     try:
         log_returns = pd.read_excel(returns_file, sheet_name='Real Estate')
@@ -443,7 +452,7 @@ print("PART 4: OPTIMAL PORTFOLIO DIAGNOSTICS")
 print("=" * 80)
 
 for period in periods:
-    pkl_file = f"results/optimal_portfolios/optimal_portfolios_all_te_{period}.pkl"
+    pkl_file = f"../results/optimal_portfolios/optimal_portfolios_all_te_{period}.pkl"
 
     try:
         import pickle

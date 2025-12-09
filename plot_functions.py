@@ -5,6 +5,7 @@ import seaborn as sns
 import pandas as pd
 import math
 
+
 def plot_sector_evolution(
     df,
     value_col,
@@ -49,20 +50,20 @@ def plot_sector_evolution(
     period_order = sorted(df_plot["Period"].unique())
     df_plot["Period"] = pd.Categorical(df_plot["Period"], categories=period_order, ordered=True)
 
-    # Define consistent GICS sector color scheme
     sector_colors = {
-        'Communication Services': '#E63946',      # Red
-        'Consumer Discretionary': '#F77F00',      # Orange
-        'Consumer Staples': '#FCBF49',            # Yellow
-        'Energy': '#06FFA5',                      # Mint Green
-        'Financials': '#118AB2',                  # Blue
-        'Health Care': '#073B4C',                 # Dark Blue
-        'Industrials': '#8B5A3C',                 # Brown
-        'Information Technology': '#9D4EDD',      # Purple
-        'Materials': '#6A994E',                   # Olive Green
-        'Real Estate': '#BC4749',                 # Burgundy
-        'Utilities': '#808080'                    # Gray
-    }
+    'Communication Services': '#E63946',      # Red
+    'Consumer Discretionary': '#F77F00',      # Orange
+    'Consumer Staples': '#FCBF49',            # Yellow
+    'Energy': '#06FFA5',                      # Mint Green
+    'Financials': '#118AB2',                  # Blue
+    'Health Care': '#073B4C',                 # Dark Blue
+    'Industrials': '#8B5A3C',                 # Brown
+    'Information Technology': '#9D4EDD',      # Purple
+    'Materials': '#FF69B4',                   # Pink
+    'Real Estate': '#BC4749',                 # Burgundy
+    'Utilities': '#808080'                    # Gray
+}
+
 
 
     # Create plot
@@ -290,13 +291,21 @@ import matplotlib.cm as cm
 
 def plot_sector_radar_grid(df, cols_to_norm, title, savepath=None):
 
-    # --- Radar labels ---
+
     labels = [
-        "         Room for\n         Maneuver",
-        "\nFlexibility",
-        "Robustness         ",
-        "Sensitivity\n(Inverted)"
-    ]
+    "         Sensitivity\n         (Inverted)",   # East
+    "Flexibility",               # North
+    "Room for         \nManeuver         ",        # West
+    "Robustness"                 # South
+]
+
+  
+
+    print("\n=== AXIS CHECK ===")
+    for label, col in zip(labels, cols_to_norm):
+        print(f"{label}  <--->  {col}")
+    print("===================\n")
+
     num_vars = len(labels)
 
     # Radar angles
@@ -311,7 +320,15 @@ def plot_sector_radar_grid(df, cols_to_norm, title, savepath=None):
     ncols = 3
     nrows = 4
 
-
+    plt.rcParams.update({
+    "font.family": "serif",
+    "font.size": 11,
+    "axes.edgecolor": "black",
+    "axes.linewidth": 1.0,
+    "grid.color": "gray",
+    "grid.linestyle": "--",
+    "grid.alpha": 0.25,
+})
     fig, axes = plt.subplots(
         nrows=nrows,
         ncols=ncols,
@@ -414,7 +431,6 @@ def plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath)
     in a single figure with 4 horizontal subplots.
     """
 
-    # Consistent sector colors
     sector_colors = {
     'Communication Services': '#E63946',      # Red
     'Consumer Discretionary': '#F77F00',      # Orange
@@ -424,12 +440,21 @@ def plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath)
     'Health Care': '#073B4C',                 # Dark Blue
     'Industrials': '#8B5A3C',                 # Brown
     'Information Technology': '#9D4EDD',      # Purple
-    'Materials': '#6A994E',                   # Olive Green
+    'Materials': '#FF69B4',                   # Pink
     'Real Estate': '#BC4749',                 # Burgundy
     'Utilities': '#808080'                    # Gray
-}
+    }
 
 
+    plt.rcParams.update({
+    "font.family": "serif",
+    "font.size": 11,
+    "axes.edgecolor": "black",
+    "axes.linewidth": 1.0,
+    "grid.color": "gray",
+    "grid.linestyle": "--",
+    "grid.alpha": 0.25,
+})
     def _prep_periods(df, period_col="Period"):
         order = sorted(df[period_col].unique())
         df = df.copy()
@@ -532,7 +557,7 @@ def plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath)
 
 
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.15)   # give space for the legend
+    plt.subplots_adjust(bottom=0.17)   # give space for the legend
 
     if savepath is not None:
         fig.savefig(savepath, dpi=300, bbox_inches="tight")
@@ -540,6 +565,13 @@ def plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath)
 
 
     return fig
+
+def extract_period_key(p):
+    tag = p.stem.split("_")[-1]   # e.g. "0621"
+    month = int(tag[:2])
+    year  = int(tag[2:])
+    return (year, month)
+
 
 
 def plot_te_carbon_frontiers_all_periods(portfolio_dir, output_path=None):
@@ -560,10 +592,14 @@ def plot_te_carbon_frontiers_all_periods(portfolio_dir, output_path=None):
     """
     from pathlib import Path
     import pickle
-
+    
     portfolio_dir = Path(portfolio_dir)
-    pickle_files = sorted(portfolio_dir.glob("optimal_portfolios_all_te_*.pkl"))
 
+    # Sort pickle files chronologically by period tag
+    pickle_files = sorted(
+    portfolio_dir.glob("optimal_portfolios_all_te_*.pkl"),
+    key=extract_period_key
+    )   
     # Custom sector order
     ordered_sectors = [
         "Industrials",
@@ -589,11 +625,20 @@ def plot_te_carbon_frontiers_all_periods(portfolio_dir, output_path=None):
     'Health Care': '#073B4C',                 # Dark Blue
     'Industrials': '#8B5A3C',                 # Brown
     'Information Technology': '#9D4EDD',      # Purple
-    'Materials': '#6A994E',                   # Olive Green
+    'Materials': '#FF69B4',                   # Pink
     'Real Estate': '#BC4749',                 # Burgundy
     'Utilities': '#808080'                    # Gray
 }
 
+    plt.rcParams.update({
+    "font.family": "serif",
+    "font.size": 11,
+    "axes.edgecolor": "black",
+    "axes.linewidth": 1.0,
+    "grid.color": "gray",
+    "grid.linestyle": "--",
+    "grid.alpha": 0.25,
+})
 
     # Create 6x2 subplots
     fig, axes = plt.subplots(6, 2, figsize=(16, 24))
