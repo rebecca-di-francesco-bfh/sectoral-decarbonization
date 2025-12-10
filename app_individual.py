@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -5,170 +6,61 @@ import matplotlib.pyplot as plt
 import pickle
 from pathlib import Path
 import plotly.graph_objects as go
+import json
 
-METRIC_DESCRIPTIONS = {
-    # --------------------------
-    # ROOM FOR MANEUVER
-    # --------------------------
-    "slope_2pct": (
-        "Slope @ 2% TE:\n"
-        "Local sensitivity of carbon reduction to small changes in tracking error "
-        "around the 2% TE point."
-    ),
-    "auc_5pct": (
-        "AUC @ 5% TE:\n"
-        "Area under the TE–Carbon frontier up to 5% TE. Measures total carbon-"
-        "reduction potential available within a 5% TE budget."
-    ),
-    "max_cut_5pct": (
-        "Max Cut @ 5% TE:\n"
-        "Maximum achievable carbon reduction (%) when allowing a 5% tracking "
-        "error budget."
-    ),
-    "min_te_50pct_cut": (
-        "Min TE for 50% Cut:\n"
-        "Minimum tracking error (bps) required to achieve at least a 50% carbon "
-        "reduction relative to the benchmark."
-    ),
+with open("metric_descriptions.json", "r") as f:
+    METRIC_DESCRIPTIONS = json.load(f)
 
-    # --------------------------
-    # FLEXIBILITY
-    # --------------------------
-    "avg_bandwidth": (
-        "Average ε-Bandwidth:\n"
-        "Average width of allowable weight intervals for stocks that still satisfy "
-        "TE and carbon constraints. Higher = more portfolio flexibility."
-    ),
-    "median_bandwidth": (
-        "Median ε-Bandwidth:\n"
-        "Median width of the ε-bands across all stocks. A central measure of "
-        "portfolio flexibility."
-    ),
-    "max_bandwidth": (
-        "Max ε-Bandwidth:\n"
-        "Maximum allowable variation range for any individual stock’s weight. "
-        "Higher = at least one stock has substantial flexibility."
-    ),
-    "l2_lower_bound": (
-        "L2 Lower Bound (Same Objective):\n"
-        "Minimum L₂ distance between the optimal portfolio and any other equally-"
-        "optimal portfolio that respects constraints. Higher = more flexibility."
-    ),
-    "turnover_upper_bound": (
-        "Turnover UB (√N × L₂):\n"
-        "Upper bound on the turnover needed to move within the set of optimal "
-        "portfolios. Higher = more flexibility."
-    ),
+st.set_page_config(page_title="TE–Carbon Dashboard for", layout="wide")
 
-    # --------------------------
-    # ROBUSTNESS
-    # --------------------------
-    "annualized_te": (
-        "Annualized Tracking Error:\n"
-        "Annualized deviation of the optimized portfolio from the benchmark. "
-        "Lower = more stable relative to benchmark movements."
-    ),
-    "annualized_volatility": (
-        "Annualized Volatility:\n"
-        "Volatility of the sector benchmark. Used to normalize tracking error."
-    ),
-    "robustness_ratio": (
-        "Robustness Ratio:\n"
-        "TE divided by sector volatility (adjusted with exponent α). "
-        "Lower values indicate more robust portfolios."
-    ),
-    "robustness_score": (
-        "Robustness Score (0–1):\n"
-        "Normalized measure of stability. Higher = more robust relative to other "
-        "sectors within the same period."
-    ),
-
-    # --------------------------
-    # SENSITIVITY
-    # --------------------------
-    "median_turnover": (
-        "Median Turnover (%):\n"
-        "Median turnover required to adjust to perturbed optimal portfolios. "
-        "Higher = more sensitivity to input changes."
-    ),
-    "median_cosine_inv": (
-        "Inverted Median Cosine Similarity:\n"
-        "Cosine similarity measures alignment between baseline and perturbed "
-        "portfolios. After inversion, higher values = greater sensitivity."
-    ),
-    "p95_carbon_loss": (
-        "P95 Carbon Loss (pp):\n"
-        "95th percentile loss in carbon reduction performance under noisy inputs. "
-        "Higher = more sensitivity in climate outcome."
-    ),
-    "p95_te_drift": (
-        "P95 TE Drift (bps):\n"
-        "95th percentile change in realized TE under perturbations. "
-        "Higher = more sensitivity in tracking error stability."
-    ),
-    "composition_sensitivity": (
-        "Composition Sensitivity:\n"
-        "Measures how much optimal weights change under small input perturbations. "
-        "Higher = more composition instability."
-    ),
-    "outcome_sensitivity": (
-        "Outcome Sensitivity:\n"
-        "Measures how carbon reduction and TE performance change under "
-        "perturbations. Higher = less stable outcomes."
-    ),
-    "sensitivity_score": (
-        "Sensitivity Score (0–1):\n"
-        "Combined normalized score (inverted) capturing composition and outcome "
-        "sensitivity. Higher = more stable, less sensitive."
-    ),
+st.markdown("""
+<style>
+div.block-container {
+    max-width: 1500px;
+    padding-left: 3rem;
+    padding-right: 3rem;
+    margin-left: auto;
+    margin-right: auto;
 }
+</style>
+""", unsafe_allow_html=True)
 
-METRIC_DESCRIPTIONS.update({
-    "room_norm": (
-        "Room for Maneuver (normalized 0–1): "
-        "Position of the sector on the Room-for-Maneuver scale after global "
-        "min–max normalization across sectors."
-    ),
-    "flex_norm": (
-        "Flexibility (normalized 0–1): "
-        "Position of the sector on the Flexibility scale after global "
-        "min–max normalization across sectors."
-    ),
-    "sens_norm": (
-        "Sensitivity (normalized 0–1): "
-        "Position of the sector on the Sensitivity scale after global "
-        "min–max normalization across sectors. Higher = less sensitive."
-    ),
-    "robust_norm": (
-        "Robustness (normalized 0–1): "
-        "Position of the sector on the Robustness scale after global "
-        "min–max normalization across sectors."
-    ),
-    "dri": (
-        "Decarbonization Readiness Index (DRI): "
-        "Simple average of the four normalized dimensions (Room, Flexibility, "
-        "Sensitivity, Robustness). Higher = greater overall readiness."
-    ),
-})
 
 def info_metric(label, value, help_text="", delta=None):
-    # convert \n to <br> for HTML tooltips
     help_html = (help_text or "").replace("\n", "<br>")
 
-    tooltip_html = """
+    st.markdown("""
     <style>
-    .tooltip-wrapper {
+    .metric-card {
+        border: 1px solid #555;
+        border-radius: 8px;
+        padding: 10px 12px;
+        margin: 4px;
+        background-color: #1e1e1e;
+    }
+    .metric-label {
+        font-size: 13px;
+        font-weight: 500;
+        color: #ddd;
         display: flex;
         align-items: center;
         gap: 6px;
     }
+    .metric-value {
+        font-size: 24px;
+        font-weight: 700;
+        margin-top: 4px;
+        color: white;
+    }
+    .delta-pos { color: #00d26a; font-size: 14px; }
+    .delta-neg { color: #ff4b4b; font-size: 14px; }
     .tooltip-icon {
         background-color: #d0d0d0;
         color: #333;
         border-radius: 50%;
-        width: 16px;
-        height: 16px;
-        font-size: 11px;
+        width: 15px;
+        height: 15px;
+        font-size: 10px;
         display: flex;
         align-items: center;
         justify-content: center;
@@ -197,75 +89,68 @@ def info_metric(label, value, help_text="", delta=None):
         line-height: 1.3;
         transition: opacity 0.25s ease-in-out;
     }
-    .tooltip-text::after {
-        content: "";
-        position: absolute;
-        top: 100%;
-        left: 50%;
-        margin-left: -5px;
-        border-width: 5px;
-        border-style: solid;
-        border-color: #555 transparent transparent transparent;
-    }
     </style>
-    """
+    """, unsafe_allow_html=True)
 
-    html_label = f"""
-    {tooltip_html}
-    <div class="tooltip-wrapper">
-        <span>{label}</span>
-        <span class="tooltip-icon">i
-            <span class="tooltip-text">{help_html}</span>
-        </span>
+    # Delta formatted
+    delta_html = ""
+    if delta is not None:
+        if isinstance(delta, (int, float)):
+            cls = "delta-pos" if delta >= 0 else "delta-neg"
+            sign = "+" if delta >= 0 else ""
+            delta_html = f"<span class='{cls}'>{sign}{delta}</span>"
+
+    card_html = f"""
+    <div class="metric-card">
+        <div class="metric-label">
+            {label}
+            <span class="tooltip-icon">i
+                <span class="tooltip-text">{help_html}</span>
+            </span>
+        </div>
+        <div class="metric-value">{value} {delta_html}</div>
     </div>
     """
 
-    # top row: label + tooltip
-    st.markdown(html_label, unsafe_allow_html=True)
-
-    # metric row (label hidden but non-empty for Streamlit)
-    st.metric(
-        label="value",
-        value=value,
-        delta=delta,
-        label_visibility="collapsed",
-    )
-
-# ---------------------------------------------------------
-# Streamlit CONFIG
-# ---------------------------------------------------------
-st.set_page_config(page_title="TE–Carbon Dashboard — Consumer Discretionary", layout="wide")
-
-# ---------------------------------------------------------
-# STYLE FIX — keep sidebar purple, make text white
-# ---------------------------------------------------------
+    st.markdown(card_html, unsafe_allow_html=True)
 st.markdown("""
 <style>
-section[data-testid="stSidebar"] * { color: #FFFFFF !important; }
-section[data-testid="stSidebar"] label { color: #FFFFFF !important; }
-section[data-testid="stSidebar"] .stSelectbox div[role="combobox"] * { color: #FFFFFF !important; }
-section[data-testid="stSidebar"] svg { fill: #FFFFFF !important; }
 
-/* New compact radar card */
+    /* ---- SELECTBOX: glowing selected text ---- */
+    div[data-baseweb="select"] span {
+        color: #F2F2F2 !important;
+        font-weight: 300 !important;
+        text-shadow: 0 0 12px rgba(255,255,255,0.45) !important;
+    }
 
+    /* ---- RADIO: glowing selected period ---- */
+    div[role="radio"][aria-checked="true"] ~ label {
+        color: #F2F2F2 !important;
+        font-weight: 300 !important;
+        text-shadow: 0 0 12px rgba(255,255,255,0.45) !important;
+    }
 
-.radar-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: #FFFFFF;
-    text-align: center;
-    margin-bottom: 6px;
-}
 </style>
 """, unsafe_allow_html=True)
 
 
 
-# ---------------------------------------------------------
-# HEADER
-# ---------------------------------------------------------
-st.markdown("## TE–Carbon Dashboard — Consumer Discretionary")
-st.caption("TE–Carbon frontier and marginal carbon gains for the Consumer Discretionary sector.")
+
+st.markdown("""
+<style>
+.section-title {
+    font-size: 22px;
+    font-weight: 700;
+    padding: 10px 18px;
+    background-color: #111;  /* matches dark theme */
+    border-left: 4px solid #6A5AE0;  /* accent color */
+    border-radius: 6px;
+    margin-top: 30px;
+    margin-bottom: 10px;
+}
+</style>
+""", unsafe_allow_html=True)
+
 
 from pathlib import Path
 
@@ -282,30 +167,84 @@ available_periods_raw = sorted([
 
 # Display-friendly labels (e.g., "03/2021")
 available_periods_display = [format_period(p) for p in available_periods_raw]
+# ---------------------------------------------------------
+# SIDEBAR
+# ---------------------------------------------------------
+sectors = pd.read_excel("data/datasets/dataset_comp_1223.xlsx")['GICS Sector'].unique()
 
-# Radio selector
-selected_display = st.radio(
-    "Select analysis period",
-    options=available_periods_display,
-    horizontal=True,
-    index=len(available_periods_display) - 1
-)
+container = st.container(border=True)
+
+with container:
+    st.markdown('<div class="settings-box">', unsafe_allow_html=True)
+
+    st.markdown("### Settings")
+
+    sector_name = st.selectbox(
+        "Select sector:",
+        sectors,
+        index=0,
+        key="sector_selector"
+    )
+
+    selected_display = st.radio(
+        "Select analysis period:",
+        options=available_periods_display,
+        horizontal=True,
+        index=len(available_periods_display) - 1
+    )
+
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+
 
 # Map back to raw tag
 selected_period_raw = available_periods_raw[
     available_periods_display.index(selected_display)
 ]
 
-st.write(f"### Showing results for period **{selected_display}**")
 
 
 # ---------------------------------------------------------
-# SIDEBAR
+# DYNAMIC HEADER (styled, sector in purple)
 # ---------------------------------------------------------
-sectors = pd.read_excel("data/datasets/dataset_comp_1223.xlsx")['GICS Sector'].unique()
-with st.sidebar:
-    st.header("Settings")
-    sector_name = st.selectbox("Sector", sectors, index=0)
+# ---------------------------------------------------------
+# DYNAMIC HEADER — SINGLE LINE TITLE WITH GOLD HIGHLIGHTS
+# ---------------------------------------------------------
+
+HIGHLIGHT = "#F2F2F2"   # soft luminous white
+
+st.markdown(
+    f"""
+    <div style="margin: 5px 0 20px 0;">
+        <h1 style="font-weight:700; margin-bottom:6px;">
+            TE–Carbon Dashboard for 
+            <span style="
+                color: #F2F2F2;
+                font-weight: 300;
+                text-shadow: 0px 0px 20px rgba(255, 215, 0, 0.8);
+            ">
+                {sector_name}
+            </span>
+            · 
+            <span style="
+                color: #F2F2F2;
+                font-weight: 300;
+                text-shadow: 0px 0px 20px rgba(255, 215, 0, 0.8);
+            ">
+                {selected_display}
+            </span>
+        </h1>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+
+
+
+
 
 
 # ---------------------------------------------------------
@@ -331,8 +270,24 @@ data = all_periods_data[sector_name]
 te = np.array(data["tracking_errors"])
 cr = np.array(data["carbon_reductions"])
 
+
 # Marginal gains (ΔCR / ΔTE)
 marginal = np.gradient(cr, te)
+
+# ---------------------------------------------------------
+# COMPUTE ELBOW POINT (L-curve method: max distance to chord)
+# ---------------------------------------------------------
+# Endpoints of frontier
+x0, y0 = te[0], cr[0]
+x1, y1 = te[-1], cr[-1]
+
+# Perpendicular distance of each point to the line AB
+distances = np.abs((te - x0)*(y1 - y0) - (cr - y0)*(x1 - x0)) / np.sqrt((x1 - x0)**2 + (y1 - y0)**2)
+
+# Index of elbow
+elbow_idx = np.argmax(distances)
+elbow_te = te[elbow_idx]
+elbow_cr = cr[elbow_idx]
 
 
 # ---------------------------------------------------------
@@ -358,7 +313,21 @@ fig_frontier.add_trace(go.Scatter(
         "Carbon Reduction: %{y:.2f}%"
         "</span><extra></extra>"
     ),
+    showlegend=False)
+)
+# Add elbow marker
+# Add elbow point WITHOUT showing it in the legend
+fig_frontier.add_trace(go.Scatter(
+    x=[elbow_te],
+    y=[elbow_cr],
+    mode="markers+text",
+    marker=dict(color="red", size=12, symbol="circle"),
+    text=[f"Elbow ({elbow_te:.1f} bps)"],
+    textposition="top center",
+    hovertemplate="<b>Elbow Point</b><br>TE: %{x:.2f} bps<br>CR: %{y:.2f}%<extra></extra>",
+    showlegend=False  # ← IMPORTANT: hides from legend
 ))
+
 
 fig_frontier.update_layout(
     title=f"{sector_name} — TE–Carbon Frontier",
@@ -404,107 +373,74 @@ fig_marginal.update_layout(
 )
 
 
+# # -----------------------------------------------------------
+# # 3) SECOND DERIVATIVE CURVATURE PLOT -> DISABLED: VERY NOISY
+# # -----------------------------------------------------------
+# second_derivative = np.gradient(np.gradient(cr, te), te)
+
+# # Normalize for plotting (optional)
+# second_derivative_norm = (second_derivative - second_derivative.min()) / \
+#                          (second_derivative.max() - second_derivative.min())
+# curv_idx = np.argmax(second_derivative)
+# curv_te  = te[curv_idx]
+# curv_cr  = cr[curv_idx]
+# curv_val = second_derivative[curv_idx]
+# fig_second = go.Figure()
+
+# fig_second.add_trace(go.Scatter(
+#     x=te,
+#     y=second_derivative,
+#     mode="lines+markers",
+#     line=dict(color="#ff9900", width=2),
+#     marker=dict(size=6),
+#     name="Second Derivative",
+#     hovertemplate=(
+#         "<span style='font-size:14px'>"
+#         "TE (bps): %{x:.2f}<br>"
+#         "Second Derivative: %{y:.4f}"
+#         "</span><extra></extra>"
+#     ),
+# ))
+
+# # Mark maximum curvature
+# fig_second.add_trace(go.Scatter(
+#     x=[curv_te],
+#     y=[curv_val],
+#     mode="markers+text",
+#     marker=dict(size=12, color="red", symbol="diamond"),
+#     text=["max curvature"],
+#     textposition="top center",
+#     name="Max Curvature",
+# ))
+
+# fig_second.update_layout(
+#     title=f"{sector_name} — Second Derivative of the TE–Carbon Curve",
+#     xaxis_title="Tracking Error (bps)",
+#     yaxis_title="Second Derivative (Curvature)",
+#     template="simple_white",
+#     hoverlabel=dict(
+#         font_size=14,
+#         bgcolor="white",
+#         font_color="black"
+#     )
+# )
+# st.plotly_chart(fig_second, use_container_width=True)
+
+
 # ---------------------------------------------------------
 # DISPLAY PLOTS
 # ---------------------------------------------------------
 col1, col2 = st.columns(2)
 col1.plotly_chart(fig_frontier, use_container_width=True)
 col2.plotly_chart(fig_marginal, use_container_width=True)
+st.caption("TE–Carbon frontier and marginal carbon gains for the Consumer Discretionary sector.")
 
-# ---------------------------------------------------------
-# DRI SECTION (score + radar underneath title)
-# ---------------------------------------------------------
-
-
-# Load DRI table (normalized dimensions + DRI)
-dri_df = pd.read_excel("results/DRI/decarbonization_readiness_index.xlsx")
-
-st.markdown("### Decarbonization Readiness Index (DRI)")
-
-# Load row for sector
-row = dri_df.loc[dri_df["Sector"] == sector_name].iloc[0]
-
-room_norm   = float(row["Room_norm"])
-flex_norm   = float(row["Flex_norm"])
-sens_norm   = float(row["Sens_norm"])
-robust_norm = float(row["Robust_norm"])
-dri_score   = float(row["DRI"])
-
-# ---------- THREE COLUMNS ----------
-col1, col2, col3 = st.columns([1.2, 0.8, 1.2])
-
-# ---------------------------------------------------------
-# 1) Radar Chart
-# ---------------------------------------------------------
-with col1:
-    labels = ["Room for Maneveur", "Flexibility", "Sensitivity", "Robustness"]
-    values = [room_norm, flex_norm, sens_norm, robust_norm] + [room_norm]
-
-    fig_radar = go.Figure(go.Scatterpolar(
-        r=values,
-        theta=labels + [labels[0]],
-        fill="toself",
-        line=dict(color="#6A5AE0", width=2),
-    ))
-
-    fig_radar.update_layout(
-        polar=dict(
-            radialaxis=dict(range=[0,1], showticklabels=False, ticks=""),
-            angularaxis=dict(tickfont=dict(size=12)),
-        ),
-        showlegend=False,
-        width=500,
-        height=360,
-        margin=dict(l=30, r=30, t=30, b=30),
-        template="plotly_dark"
-    )
-
-    st.plotly_chart(fig_radar, config={"displayModeBar": False})
-
-
-# ---------------------------------------------------------
-# 2) Center table: DRI Score only
-# ---------------------------------------------------------
-with col2:
-    st.markdown("#### Overall DRI Score")
-    st.markdown(
-        f"""
-        <table style="width:100%; border:1px solid #444; border-radius:6px; padding:6px;">
-            <tr>
-                <td style="font-size:16px; font-weight:600; color:white;">DRI</td>
-                <td style="font-size:20px; font-weight:700; color:#9BE7FF; text-align:right;">
-                    {dri_score:.3f}
-                </td>
-            </tr>
-        </table>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# ---------------------------------------------------------
-# 3) Table of the four dimension scores
-# ---------------------------------------------------------
-with col3:
-    st.markdown("#### Dimension Scores")
-
-    st.markdown(
-        f"""
-        <table style="width:100%; border:1px solid #444; border-radius:6px; padding:6px;">
-            <tr><th style='text-align:left;'>Dimension</th><th style='text-align:right;'>Score</th></tr>
-            <tr><td>Room for Maneuver</td><td style='text-align:right; color:#A2FFAA;'>{room_norm:.3f}</td></tr>
-            <tr><td>Flexibility</td><td style='text-align:right; color:#A2FFAA;'>{flex_norm:.3f}</td></tr>
-            <tr><td>Sensitivity</td><td style='text-align:right; color:#A2FFAA;'>{sens_norm:.3f}</td></tr>
-            <tr><td>Robustness</td><td style='text-align:right; color:#A2FFAA;'>{robust_norm:.3f}</td></tr>
-        </table>
-        """,
-        unsafe_allow_html=True,
-    )
 
 # ---------------------------------------------------------
 # ROOM FOR MANEUVER METRICS
 # ---------------------------------------------------------
-st.markdown("### Room for Maneuver — Key Metrics")
+st.markdown('<div class="section-title">Room for Maneuver — Key Metrics</div>', unsafe_allow_html=True)
+
 
 # Convert TE from bps → percent for consistency with formulas
 te_pct = te / 100.0
@@ -561,47 +497,30 @@ else:
 col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
-    info_metric(
-        label="Slope @ 2% TE",
-        value=f"{slope_2pct:.2f}",
-        help_text=METRIC_DESCRIPTIONS["slope_2pct"]
-    )
+    info_metric("Slope @ 2% TE", f"{slope_2pct:.2f}",
+                help_text=METRIC_DESCRIPTIONS["slope_2pct"])
 
 with col2:
-    info_metric(
-        label="Elasticity @ 2% TE",
-        value=f"{elasticity:.2f}",
-        help_text=(
-            "Elasticity of carbon reduction at 2% TE: "
-            "percentage change in carbon reduction per 1% change in TE."
-        )
-    )
+    info_metric("Elasticity @ 2% TE", f"{elasticity:.2f}",
+                help_text="Elasticity of carbon reduction at 2% TE")
 
 with col3:
-    info_metric(
-        label="AUC ≤ 5% TE",
-        value=f"{auc_5pct:.2f}",
-        help_text=METRIC_DESCRIPTIONS["auc_5pct"]
-    )
+    info_metric("AUC ≤ 5% TE", f"{auc_5pct:.2f}",
+                help_text=METRIC_DESCRIPTIONS["auc_5pct"])
 
 with col4:
-    info_metric(
-        label="Max Cut @ 5% TE",
-        value=f"{max_cut_5pct:.1f}%",
-        help_text=METRIC_DESCRIPTIONS["max_cut_5pct"]
-    )
+    info_metric("Max Cut @ 5% TE", f"{max_cut_5pct:.1f}%",
+                help_text=METRIC_DESCRIPTIONS["max_cut_5pct"])
 
 with col5:
-    info_metric(
-        label="Min TE for 50% Cut",
-        value=te50_label,
-        help_text=METRIC_DESCRIPTIONS["min_te_50pct_cut"]
-    )
+    info_metric("Min TE for 50% Cut", te50_label,
+                help_text=METRIC_DESCRIPTIONS["min_te_50pct_cut"])
 
 # ---------------------------------------------------------
 # FLEXIBILITY METRICS (period 1223)
 # ---------------------------------------------------------
-st.markdown("### Flexibility — Key Metrics")
+st.markdown('<div class="section-title">Flexibility — Key Metrics</div>', unsafe_allow_html=True)
+
 
 # Load flexibility panel
 try:
@@ -670,7 +589,8 @@ else:
 # ---------------------------------------------------------
 # SENSITIVITY METRICS (period 1223)
 # ---------------------------------------------------------
-st.markdown("### Sensitivity — Key Metrics")
+st.markdown('<div class="section-title">Sensitivity — Key Metrics</div>', unsafe_allow_html=True)
+
 
 # Load sensitivity panel
 try:
@@ -695,9 +615,9 @@ else:
     median_turnover = float(row["Median_Turnover_pct"])
     median_cosine   = float(row["Median_Cosine"])
     p95_carbloss    = float(row["P95_CarbonLoss_pp"])
-    p95_tedrift     = float(row["P95_TE_Drift_bps"])
 
-    col1, col2, col3, col4 = st.columns(4)
+
+    col1, col2, col3  = st.columns(3)
 
     with col1:
         info_metric(
@@ -720,16 +640,13 @@ else:
             help_text=METRIC_DESCRIPTIONS["p95_carbon_loss"]
         )
 
-    with col4:
-        info_metric(
-            label="P95 TE Drift (bps)",
-            value=f"{p95_tedrift * 10000:.1f} bps",
-            help_text=METRIC_DESCRIPTIONS["p95_te_drift"]
-        )
+ 
 # ---------------------------------------------------------
 # ROBUSTNESS METRICS (period 1223)
 # ---------------------------------------------------------
-st.markdown("### Robustness — Key Metrics")
+st.markdown('<div class="section-title">Robustness — Key Metrics</div>', unsafe_allow_html=True)
+
+
 
 try:
     robustness_panel = pd.read_excel(
@@ -784,4 +701,92 @@ else:
             help_text=METRIC_DESCRIPTIONS["annualized_volatility"]
         )
 
-   
+
+# Add vertical spacing before DRI
+st.markdown("<br><br>", unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# DRI SECTION (score + radar underneath title)
+# ---------------------------------------------------------
+
+
+# Load DRI table (normalized dimensions + DRI)
+dri_df = pd.read_excel("results/DRI/decarbonization_readiness_index.xlsx")
+
+st.markdown("### Decarbonization Readiness Index (DRI)")
+
+# Load row for sector
+row = dri_df.loc[dri_df["Sector"] == sector_name].iloc[0]
+
+room_norm   = float(row["Room_norm"])
+flex_norm   = float(row["Flex_norm"])
+sens_norm   = float(row["Sens_norm"])
+robust_norm = float(row["Robust_norm"])
+dri_score   = float(row["DRI"])
+
+# ---------- THREE COLUMNS ----------
+col1, col2 = st.columns([1.2, 0.8])
+
+# ---------------------------------------------------------
+# 1) Radar Chart
+# ---------------------------------------------------------
+with col1:
+    labels = ["Room for Maneveur", "Flexibility", "Sensitivity", "Robustness"]
+    values = [room_norm, flex_norm, sens_norm, robust_norm] + [room_norm]
+
+    fig_radar = go.Figure(go.Scatterpolar(
+        r=values,
+        theta=labels + [labels[0]],
+        fill="toself",
+        line=dict(color="#6A5AE0", width=2),
+    ))
+
+    fig_radar.update_layout(
+        polar=dict(
+            radialaxis=dict(range=[0,1], showticklabels=False, ticks=""),
+            angularaxis=dict(tickfont=dict(size=12)),
+        ),
+        showlegend=False,
+        width=500,
+        height=360,
+        margin=dict(l=30, r=30, t=30, b=30),
+        template="plotly_dark"
+    )
+
+    st.plotly_chart(fig_radar, config={"displayModeBar": False})
+
+
+# ---------------------------------------------------------
+# 2) Center table: DRI Score only
+# ---------------------------------------------------------
+with col2:
+    st.markdown("#### Overall DRI Score")
+    st.markdown(
+        f"""
+        <table style="width:100%; border:1px solid #444; border-radius:6px; padding:6px;">
+            <tr>
+                <td style="font-size:16px; font-weight:600; color:white;">DRI</td>
+                <td style="font-size:20px; font-weight:700; color:#9BE7FF; text-align:right;">
+                    {dri_score:.3f}
+                </td>
+            </tr>
+        </table>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("#### Dimension Scores")
+
+    st.markdown(
+        f"""
+        <table style="width:100%; border:1px solid #444; border-radius:6px; padding:6px;">
+            <tr><th style='text-align:left;'>Dimension</th><th style='text-align:right;'>Score</th></tr>
+            <tr><td>Room for Maneuver</td><td style='text-align:right; color:#A2FFAA;'>{room_norm:.3f}</td></tr>
+            <tr><td>Flexibility</td><td style='text-align:right; color:#A2FFAA;'>{flex_norm:.3f}</td></tr>
+            <tr><td>Sensitivity</td><td style='text-align:right; color:#A2FFAA;'>{sens_norm:.3f}</td></tr>
+            <tr><td>Robustness</td><td style='text-align:right; color:#A2FFAA;'>{robust_norm:.3f}</td></tr>
+        </table>
+        """,
+        unsafe_allow_html=True,
+    )
+

@@ -1,17 +1,38 @@
 """
-Robustness Score Computation for Optimal Portfolio Analysis
+Robustness Score Computation for Sector-Level Optimal Portfolios
+----------------------------------------------------------------
 
-This script computes robustness scores for optimal portfolios by comparing
-tracking error against sector volatility across different time periods.
+This module evaluates the robustness of decarbonized portfolios by combining
+realized tracking error with the volatility of the corresponding sector benchmark.
 
-The robustness score is calculated as:
-    Robustness Score = 1 / (1 + TE/Volatility)
+For each sector and estimation period, the procedure:
+    1. Extracts the optimal decarbonized portfolio at a fixed target tracking-error level.
+    2. Computes out-of-sample (next-period) tracking error using daily returns.
+    3. Merges tracking error with the sector’s annualized benchmark volatility.
+    4. Constructs robustness indicators.
 
-Where:
-    - TE (Tracking Error): Standard deviation of active returns (portfolio vs benchmark)
-    - Volatility: Sector benchmark volatility
-    - Higher score = More robust portfolio (lower TE relative to volatility)
+Definitions
+-----------
+Let TE denote the annualized tracking error of the optimized portfolio relative
+to the sector benchmark, and let σ be the annualized sector volatility.
+
+A robustness ratio is defined as:
+    Robustness_Ratio = TE / σ^α
+
+where α ∈ (0,1] is a softening parameter (default: α = 0.5) that adjusts the
+relative weight placed on sector volatility.
+
+Within each period, robustness ratios are transformed into normalized scores:
+    Robustness_Score = (max_ratio − ratio) / (max_ratio − min_ratio)
+
+so that:
+    - Robustness_Score = 1 indicates the most robust (lowest TE relative to volatility),
+    - Robustness_Score = 0 indicates the least robust.
+
+The output consists of tracking errors, volatility measures, robustness ratios,
+and normalized robustness scores for each sector and period.
 """
+
 
 import os
 import pickle
@@ -49,7 +70,7 @@ def load_data():
     tuple
         (benchmark_sectors_daily_returns, sector_annualized_volatility_by_quarter)
     """
-    print("📂 Loading benchmark data...")
+    print("Loading benchmark data...")
 
     benchmark_sectors_daily_returns = pd.read_excel(
         "data/benchmark_returns_volatility/sector_portfolio_returns_all_periods.xlsx",
@@ -62,7 +83,7 @@ def load_data():
         dtype={'period': str}
     )
 
-    print(f"✅ Loaded benchmark data")
+    print(f"Loaded benchmark data")
     print(f"   - Daily returns shape: {benchmark_sectors_daily_returns.shape}")
     print(f"   - Volatility records: {len(sector_annualized_volatility_by_quarter)}")
 
@@ -125,7 +146,7 @@ def process_sector(sector, period, benchmark_return_index_period, optimal_portfo
         index_col=0
     )
 
-    # Extract optimal portfolio at target TE
+    # Extract optimal portfolio at target TE -> 2% 
     optimal_portfolios_shrink_2_TE = extract_optimal_portfolios_at_target_te(
         optimal_portfolios_all_te,
         target_te_bps=TARGET_TE_BPS
@@ -141,7 +162,7 @@ def process_sector(sector, period, benchmark_return_index_period, optimal_portfo
 
     # Validate alignment
     if len(common_columns) != len(stock_labels):
-        print(f"   ⚠️  Warning: Column mismatch for {sector}")
+        print(f"      Warning: Column mismatch for {sector}")
         print(f"      Expected {len(stock_labels)}, got {len(common_columns)} common columns")
 
     # Calculate portfolio daily returns
@@ -153,7 +174,7 @@ def process_sector(sector, period, benchmark_return_index_period, optimal_portfo
     r_b, r_d = r_b.loc[common_idx], r_d.loc[common_idx]
 
     if len(common_idx) == 0:
-        print(f"   ⚠️  Warning: No common dates for {sector} in period {period}")
+        print(f"      Warning: No common dates for {sector} in period {period}")
         return np.nan
 
     # Compute tracking error
@@ -181,14 +202,14 @@ def process_period(period, benchmark_sectors_daily_returns, sector_annualized_vo
         DataFrame with robustness metrics for the period, or None if processing fails
     """
     print(f"\n{'='*80}")
-    print(f"🚀 PROCESSING PERIOD: {period}")
+    print(f"PROCESSING PERIOD: {period}")
     print(f"{'='*80}")
 
     # Check if optimal portfolio file exists
     optim_file = f"results/optimal_portfolios/optimal_portfolios_all_te_{period}.pkl"
     if not os.path.exists(optim_file):
-        print(f"⚠️  ERROR: Missing optimal portfolios file: {optim_file}")
-        print(f"   Skipping period {period}\n")
+        print(f"ERROR: Missing optimal portfolios file: {optim_file}")
+        print(f"Skipping period {period}\n")
         return None
 
     # Load optimal portfolios
@@ -201,21 +222,21 @@ def process_period(period, benchmark_sectors_daily_returns, sector_annualized_vo
     ].drop(columns='period')
 
     if benchmark_return_index_period.empty:
-        print(f"⚠️  WARNING: No benchmark returns found for period {period}")
-        print(f"   Skipping period {period}\n")
+        print(f"      WARNING: No benchmark returns found for period {period}")
+        print(f"      Skipping period {period}\n")
         return None
 
     # Compute tracking error for each sector
     sector_te = {}
     sectors = benchmark_return_index_period.columns
-    print(f"⚙️  Processing {len(sectors)} sectors...")
+    print(f"      Processing {len(sectors)} sectors...")
 
     for sector in sectors:
         try:
             te_ann = process_sector(sector, period, benchmark_return_index_period, optimal_portfolios_all_te)
             sector_te[sector] = te_ann
         except Exception as e:
-            print(f"   ⚠️  Error processing {sector}: {str(e)}")
+            print(f"      Error processing {sector}: {str(e)}")
             sector_te[sector] = np.nan
 
     # Build DataFrame
@@ -224,7 +245,7 @@ def process_period(period, benchmark_sectors_daily_returns, sector_annualized_vo
 
     # Save TE results for this period
     te_df.to_excel(f"results/robustness/te_results_{period}_next_3m.xlsx", index=False)
-    print(f"   ✅ Saved TE results for period {period}")
+    print(f"      Saved TE results for period {period}")
 
     # Get volatility for this period
     sector_annualized_volatility_period = sector_annualized_volatility_by_quarter.loc[
@@ -232,16 +253,16 @@ def process_period(period, benchmark_sectors_daily_returns, sector_annualized_vo
     ]
 
     if sector_annualized_volatility_period.empty:
-        print(f"⚠️  WARNING: No volatility data found for period {period}")
-        print(f"   Skipping period {period}\n")
+        print(f"      WARNING: No volatility data found for period {period}")
+        print(f"      Skipping period {period}\n")
         return None
 
     # Merge TE and volatility
     merged = pd.merge(te_df, sector_annualized_volatility_period, on="sector", how="inner")
 
     if merged.empty:
-        print(f"⚠️  WARNING: No matching sectors between TE and volatility for period {period}")
-        print(f"   Skipping period {period}\n")
+        print(f"      WARNING: No matching sectors between TE and volatility for period {period}")
+        print(f"      Skipping period {period}\n")
         return None
 
     # ---- Soft volatility adjustment ----
@@ -259,7 +280,7 @@ def process_period(period, benchmark_sectors_daily_returns, sector_annualized_vo
         ratio_max - ratio_min
     )
 
-    print(f"   ✅ Computed robustness scores for {len(merged)} sectors")
+    print(f"      Computed robustness scores for {len(merged)} sectors")
 
     return merged[['sector', 'period', 'annualized_TE', 'annualized_volatility',
                    'Robustness_Ratio', 'Robustness_Score']]
@@ -275,35 +296,35 @@ def validate_robustness_scores(robust_df):
         DataFrame with robustness scores
     """
     print("\n" + "="*80)
-    print("🔍 VALIDATING ROBUSTNESS SCORES")
+    print("      VALIDATING ROBUSTNESS SCORES")
     print("="*80)
 
     # Check for NaN values
     nan_counts = robust_df.isna().sum()
     if nan_counts.sum() > 0:
-        print("⚠️  WARNING: Found NaN values:")
+        print("       WARNING: Found NaN values:")
         for col, count in nan_counts.items():
             if count > 0:
                 print(f"   - {col}: {count} NaN values")
     else:
-        print("✅ No NaN values found")
+        print("      No NaN values found")
 
     # Check robustness score range
     score_min = robust_df['Robustness_Score'].min()
     score_max = robust_df['Robustness_Score'].max()
-    print(f"✅ Robustness Score range: [{score_min:.4f}, {score_max:.4f}]")
+    print(f"Robustness Score range: [{score_min:.4f}, {score_max:.4f}]")
 
     if score_min < 0 or score_max > 1:
-        print("⚠️  WARNING: Robustness scores outside expected [0, 1] range!")
+        print("      WARNING: Robustness scores outside expected [0, 1] range!")
 
     # Check sector count per period
     sector_counts = robust_df.groupby('period')['sector'].count()
-    print(f"\n✅ Sector count per period:")
+    print(f"\n      Sector count per period:")
     for period, count in sector_counts.items():
         print(f"   - {period}: {count} sectors")
 
     # Summary statistics
-    print(f"\n📊 Summary Statistics:")
+    print(f"\n Summary Statistics:")
     print(f"   - Total records: {len(robust_df)}")
     print(f"   - Unique sectors: {robust_df['sector'].nunique()}")
     print(f"   - Unique periods: {robust_df['period'].nunique()}")
@@ -322,11 +343,11 @@ def plot_robustness_metrics(robust_df_plot):
         DataFrame with renamed columns for plotting
     """
     print("\n" + "="*80)
-    print("📈 GENERATING PLOTS")
+    print("GENERATING PLOTS")
     print("="*80)
 
     # Plot 1: Annualized Tracking Error
-    print("\n📊 Plotting Annualized Tracking Error...")
+    print("\nPlotting Annualized Tracking Error...")
     plot_sector_evolution(
         df=robust_df_plot,
         value_col='annualized_TE',
@@ -336,7 +357,7 @@ def plot_robustness_metrics(robust_df_plot):
     )
 
     # Plot 2: Annualized Volatility
-    print("📊 Plotting Annualized Volatility...")
+    print("Plotting Annualized Volatility...")
     plot_sector_evolution(
         df=robust_df_plot,
         value_col='annualized_volatility',
@@ -346,7 +367,7 @@ def plot_robustness_metrics(robust_df_plot):
     )
 
     # Plot 3: Unnormalized Robustness Score
-    print("📊 Plotting Robustness Score Ratio...")
+    print("Plotting Robustness Score Ratio...")
     plot_sector_evolution(
         df=robust_df_plot,
         value_col='Robustness_Ratio',
@@ -356,7 +377,7 @@ def plot_robustness_metrics(robust_df_plot):
     )
 
     # Plot 4: Normalized Robustness Score
-    print("📊 Plotting Robustness Score...")
+    print("Plotting Robustness Score...")
     plot_sector_evolution(
         df=robust_df_plot,
         value_col='Robustness_Score',
@@ -365,7 +386,7 @@ def plot_robustness_metrics(robust_df_plot):
         figsize=(12, 7)
     )
 
-    print("✅ All plots generated successfully")
+    print("All plots generated successfully")
 
 
 # =============================================================================
@@ -404,7 +425,7 @@ def main():
 
     # Check if we have any results
     if len(robustness_records) == 0:
-        print("\n⚠️  ERROR: No robustness data was computed for any period!")
+        print("\nERROR: No robustness data was computed for any period!")
         print("   Please check the errors above and ensure all required files exist.")
         return
 
@@ -415,7 +436,7 @@ def main():
 
     robust_df = pd.concat(robustness_records, ignore_index=True)
 
-    print(f"✅ Combined robustness data from {len(robustness_records)} periods")
+    print(f"Combined robustness data from {len(robustness_records)} periods")
     print(f"   Total rows: {len(robust_df)}")
 
     # Validate results
@@ -424,7 +445,7 @@ def main():
     # Save combined results
     output_file = "results/robustness/robustness_scores_by_period.xlsx"
     robust_df.to_excel(output_file, index=False)
-    print(f"\n✅ Saved robustness scores to: {output_file}")
+    print(f"\nSaved robustness scores to: {output_file}")
 
     # Prepare data for plotting
     robust_df_plot = robust_df.rename(columns={'sector': 'Sector', 'period': 'Period'})
@@ -433,17 +454,17 @@ def main():
     plot_robustness_metrics(robust_df_plot)
 
     print("\n" + "="*80)
-    print("✅ ROBUSTNESS SCORE COMPUTATION COMPLETE")
+    print("ROBUSTNESS SCORE COMPUTATION COMPLETE")
     print("="*80)
 
     # Display top 5 most robust sectors (averaged across all periods)
-    print("\n🏆 Top 5 Most Robust Sectors (Average across all periods):")
+    print("\nTop 5 Most Robust Sectors (Average across all periods):")
     avg_robustness = robust_df.groupby('sector')['Robustness_Score'].mean().sort_values(ascending=False)
     for i, (sector, score) in enumerate(avg_robustness.head(5).items(), 1):
         print(f"   {i}. {sector}: {score:.4f}")
 
     # Display top 5 least robust sectors
-    print("\n⚠️  Top 5 Least Robust Sectors (Average across all periods):")
+    print("\nTop 5 Least Robust Sectors (Average across all periods):")
     for i, (sector, score) in enumerate(avg_robustness.tail(5).items(), 1):
         print(f"   {i}. {sector}: {score:.4f}")
 

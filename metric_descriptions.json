@@ -1,0 +1,31 @@
+{
+  "slope_2pct": "Slope @ 2% TE:\nLocal sensitivity of carbon reduction to small changes in tracking error around the 2% TE point.",
+  "elasticity": "Elasticity of carbon reduction at 2% TE: percentage change in carbon reduction per 1% change in TE.",
+  "auc_5pct": "AUC @ 5% TE:\nArea under the TE–Carbon frontier up to 5% TE. Measures total carbon-reduction potential available within a 5% TE budget.",
+  "max_cut_5pct": "Max Cut @ 5% TE:\nMaximum achievable carbon reduction (%) when allowing a 5% tracking error budget.",
+  "min_te_50pct_cut": "Min TE for 50% Cut:\nMinimum tracking error (bps) required to achieve at least a 50% carbon reduction relative to the benchmark.",
+
+  "avg_bandwidth": "Average ε-Bandwidth:\nAverage width of allowable weight intervals for stocks that still satisfy TE and carbon constraints. Higher = more portfolio flexibility.",
+  "median_bandwidth": "Median ε-Bandwidth:\nMedian width of the ε-bands across all stocks. A central measure of portfolio flexibility.",
+  "max_bandwidth": "Max ε-Bandwidth:\nMaximum allowable variation range for any individual stock’s weight. Higher = at least one stock has substantial flexibility.",
+  "l2_lower_bound": "L2 Lower Bound (Same Objective):\nMinimum L₂ distance between the optimal portfolio and any other equally-optimal portfolio that respects constraints. Higher = more flexibility.",
+  "turnover_upper_bound": "Turnover UB (√N × L₂):\nUpper bound on the turnover needed to move within the set of optimal portfolios. Higher = more flexibility.",
+
+  "annualized_te": "Annualized Tracking Error:\nAnnualized deviation of the optimized portfolio from the benchmark. Lower = more stable relative to benchmark movements.",
+  "annualized_volatility": "Annualized Volatility:\nVolatility of the sector benchmark. Used to normalize tracking error.",
+  "robustness_ratio": "Robustness Ratio:\nTE divided by sector volatility (adjusted with exponent α). Lower values indicate more robust portfolios.",
+  "robustness_score": "Robustness Score (0–1):\nNormalized measure of stability. Higher = more robust relative to other sectors within the same period.",
+
+  "median_turnover": "Median Turnover (%):\nMedian turnover required to adjust to perturbed optimal portfolios. Higher = more sensitivity to input changes.",
+  "median_cosine_inv": "Inverted Median Cosine Similarity:\nCosine similarity measures alignment between baseline and perturbed portfolios. After inversion, higher values = greater sensitivity.",
+  "p95_carbon_loss": "P95 Carbon Loss (pp):\n95th percentile loss in carbon reduction performance under noisy inputs. Higher = more sensitivity in climate outcome.",
+  "composition_sensitivity": "Composition Sensitivity:\nMeasures how much optimal weights change under small input perturbations. Higher = more composition instability.",
+  "outcome_sensitivity": "Outcome Sensitivity:\nMeasures how carbon reduction and TE performance change under perturbations. Higher = less stable outcomes.",
+  "sensitivity_score": "Sensitivity Score (0–1):\nCombined normalized score (inverted) capturing composition and outcome sensitivity. Higher = more stable, less sensitive.",
+
+  "room_norm": "Room for Maneuver (normalized 0–1): Position of the sector on the Room-for-Maneuver scale after global min–max normalization across sectors.",
+  "flex_norm": "Flexibility (normalized 0–1): Position of the sector on the Flexibility scale after global min–max normalization across sectors.",
+  "sens_norm": "Sensitivity (normalized 0–1): Position of the sector on the Sensitivity scale after global min–max normalization across sectors. Higher = less sensitive.",
+  "robust_norm": "Robustness (normalized 0–1): Position of the sector on the Robustness scale after global min–max normalization across sectors.",
+  "dri": "Decarbonization Readiness Index (DRI): Simple average of the four normalized dimensions (Room, Flexibility, Sensitivity, Robustness). Higher = greater overall readiness."
+}
