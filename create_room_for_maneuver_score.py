@@ -6,8 +6,6 @@ for each sector across all time periods. These metrics capture the "room for man
 that each sector has in reducing carbon while staying within tracking error constraints.
 
 Key Metrics:
-- Slope at 2% TE: How steep is the frontier near the 2% tracking error level
-- Elasticity at 2% TE: Percentage responsiveness of carbon cuts to TE changes
 - AUC to 5% TE: Area under the curve (total carbon reduction potential)
 - Max Cut at 5% TE: Maximum carbon reduction achievable at 5% tracking error
 - TE for 50% Cut: Tracking error needed to achieve 50% of maximum carbon reduction
@@ -24,46 +22,17 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from plot_functions import plot_sector_evolution
 
-# =============================================================================
-# STEP 1: LOAD SECTOR VOLATILITIES
-# =============================================================================
-# We need sector volatilities to normalize the room for maneuver scores.
-# This accounts for the fact that high-volatility sectors naturally have
-# more "room" to deviate from the benchmark.
-
-print("Loading sector volatilities...")
-
-# Load precomputed annualized sector volatilities from benchmark replication
-vol_df = pd.read_excel("data/benchmark_returns_volatility/sector_annualized_volatility_2021_2023.xlsx")
-
-# Ensure proper column naming (Excel may add an index column)
-if 'Unnamed: 0' in vol_df.columns:
-    vol_df = vol_df.rename(columns={'Unnamed: 0': 'Sector'})
-
-# The volatility values are already in the correct format (annualized)
-print(f"✓ Loaded volatilities for {len(vol_df)} sectors")
-print(f"   Volatility range: {vol_df.iloc[:, 1].min():.4f} to {vol_df.iloc[:, 1].max():.4f}\n")
-
-# Rename column to standard name if needed
-if vol_df.columns[1] != 'Sector Volatility':
-    vol_df.columns = ['Sector', 'Sector Volatility']
 
 
 # =============================================================================
-# STEP 2: CONFIGURATION
+# STEP 1: CONFIGURATION
 # =============================================================================
 
 # Define all periods to analyze
 periods = ["0321", "0621", "0921", "1221", "0322", "0622", "0922", "1222", "0323", "0623", "0923", "1223"]
 
-# Tracking error levels for metric computation
-TE_TARGET = 0.02      # 2% tracking error (common benchmark)
-TE_AUC_MAX = 0.05     # 5% tracking error (maximum for AUC calculation)
-TE_WIN_BPS = 25       # Window size in basis points for slope/elasticity (±0.25%)
-
-
 # =============================================================================
-# STEP 3: HELPER FUNCTIONS FOR FRONTIER ANALYSIS
+# STEP 2: HELPER FUNCTIONS FOR FRONTIER ANALYSIS
 # =============================================================================
 
 def _interp(te0, te_grid, c_grid):
@@ -117,65 +86,32 @@ def _prep_frontier(te_bps, cuts_pct):
 
     return uniq_te, np.array(uniq_c)
 
-
-def _slope_at(te_grid, c_grid, te0, win_bps=25):
+def _elasticity_te_min_to_2pct(te_grid, c_grid):
     """
-    Calculate the slope of the frontier at a specific tracking error level.
-
-    Uses a symmetric window around te0 to estimate the derivative:
-    slope ≈ (c(te0 + h) - c(te0 - h)) / (2h)
-
-    This measures how much additional carbon reduction is gained per unit
-    increase in tracking error at the specified point.
-
-    Args:
-        te_grid: Array of tracking error values
-        c_grid: Array of carbon reduction values
-        te0: Point at which to calculate slope
-        win_bps: Window size in basis points (default 25 = ±0.25%)
-
-    Returns:
-        Slope at te0, or NaN if calculation fails
+    Elasticity between TE_min and 2% TE.
+    
+    Elasticity = (ΔC / ΔTE) * (TE_avg / C_avg)
+    where ΔC = C(2%) - C(TE_min), ΔTE = 2% - TE_min.
     """
-    h = win_bps / 10000.0  # Convert basis points to decimal
+    te_min = te_grid[0]
+    te_target = 0.02
 
-    # Define window boundaries
-    tl, tr = np.clip([te0 - h, te0 + h], te_grid[0], te_grid[-1])
-
-    if tr <= tl:
+    if te_target <= te_min:
         return np.nan
 
-    # Calculate slope using interpolated values
-    return (_interp(tr, te_grid, c_grid) - _interp(tl, te_grid, c_grid)) / (tr - tl)
+    c_min = _interp(te_min, te_grid, c_grid)
+    c_target = _interp(te_target, te_grid, c_grid)
 
+    dC = c_target - c_min
+    dTE = te_target - te_min
 
-def _elasticity_at(te_grid, c_grid, te0, win_bps=25):
-    """
-    Calculate the elasticity of carbon reduction with respect to tracking error.
-
-    Elasticity = (dC/dTE) * (TE/C)
-
-    This measures the percentage change in carbon reduction for a 1% change
-    in tracking error. High elasticity means the sector is very responsive to
-    allowing more tracking error.
-
-    Args:
-        te_grid: Array of tracking error values
-        c_grid: Array of carbon reduction values
-        te0: Point at which to calculate elasticity
-        win_bps: Window size in basis points
-
-    Returns:
-        Elasticity at te0, or NaN if calculation fails
-    """
-    c0 = _interp(te0, te_grid, c_grid)
-    s = _slope_at(te_grid, c_grid, te0, win_bps)
-
-    if c0 <= 0 or not np.isfinite(s):
+    if dTE <= 0 or c_min <= 0 or dC <= 0:
         return np.nan
 
-    return s * (te0 / c0)
+    TE_avg = 0.5 * (te_min + te_target)
+    C_avg = 0.5 * (c_min + c_target)
 
+    return (dC / dTE) * (TE_avg / C_avg)
 
 def _auc_to(te_grid, c_grid, te_max):
     """
@@ -264,7 +200,7 @@ def norm(x):
     return (x - x_min) / (x_max - x_min)
 
 # =============================================================================
-# STEP 4: COMPUTE METRICS FOR ALL SECTORS AND PERIODS
+# STEP 3: COMPUTE METRICS FOR ALL SECTORS AND PERIODS
 # =============================================================================
 
 print("Computing frontier metrics for all sectors and periods...")
@@ -301,25 +237,23 @@ for period in periods:
         c_max = np.nanmax(c)
         c_norm = c / c_max if c_max > 0 else c
 
-        # Compute metrics on the normalized frontier
-        slope2 = _slope_at(te_frac, c_norm, TE_TARGET, TE_WIN_BPS)
-        elast2 = _elasticity_at(te_frac, c_norm, TE_TARGET, TE_WIN_BPS)
-        auc5 = _auc_to(te_frac, c_norm, TE_AUC_MAX) / TE_AUC_MAX
-        te50 = _te_for_cut(te_frac, c_norm, 0.50)
+       # Compute metrics on the normalized frontier (slope & elasticity removed)
+        auc2 = _auc_to(te_frac, c_norm, 0.02) / 0.02      # Early AUC
+        te50 = _te_for_cut(te_frac, c_norm, 0.50)         # TE for 50% of max cut
+        c_at_1pct = _interp(0.01, te_frac, c_norm)        # Early carbon reduction at 1%
 
-        # Use raw carbon reduction (in %) for maximum cut at 5% TE
-        max5 = _interp(TE_AUC_MAX, te_frac, c)
+        elasticity_early = _elasticity_te_min_to_2pct(te_frac, c_norm)
 
-        # Store results
         records.append({
             "Sector": sector,
             "Period": period,
-            "Slope_at_2pct": slope2,
-            "Elasticity_at_2pct": elast2,
-            "AUC_to_5pctTE": auc5,
-            "MaxCut_at_5pctTE": max5,
-            "TE_for_50pctCut": te50
+            "C_at_1pct": c_at_1pct,
+            "AUC_to_2pctTE": auc2,
+            "TE_for_50pctCut": te50,
+            "Elasticity_early": elasticity_early
         })
+
+
 
 # Build results dataframe
 df = pd.DataFrame(records)
@@ -334,16 +268,7 @@ print(df.head(10))
 
 
 # =============================================================================
-# STEP 5: SAVE RESULTS
-# =============================================================================
-
-output_file = "results/room_for_maneuver/room_for_maneuver_metrics.csv"
-df.to_csv(output_file, index=False)
-print(f"\n✓ Results saved to: {output_file}")
-
-
-# =============================================================================
-# STEP 6: COMPUTE ROOM FOR MANEUVER SCORE
+# STEP 4: COMPUTE ROOM FOR MANEUVER SCORE
 # =============================================================================
 # Combine the individual metrics into a single "Room for Maneuver" score.
 # This score represents the overall capacity of each sector to reduce carbon
@@ -354,68 +279,34 @@ print("\nComputing Room for Maneuver Score...")
 # Create a copy for normalization
 df_norm = df.copy()
 
-# Normalize each metric to [0, 1] range across all sectors and periods
-metrics_to_normalize = ['Slope_at_2pct', 'Elasticity_at_2pct', 'AUC_to_5pctTE', 'MaxCut_at_5pctTE']
+df_norm['C_at_1pct_norm'] = _minmax(df_norm['C_at_1pct'])
+df_norm['AUC_to_2pctTE_norm'] = _minmax(df_norm['AUC_to_2pctTE'])
+df_norm['TE_for_50pctCut_norm'] = 1 - _minmax(df_norm['TE_for_50pctCut'])
+df_norm["Elasticity_early_norm"] = _minmax(df_norm["Elasticity_early"])
 
-for metric in metrics_to_normalize:
-    df_norm[f'{metric}_norm'] = _minmax(df_norm[metric].values)
-
-# Invert TE_for_50pctCut: lower TE needed is better (higher score)
-# First normalize, then invert (1 - normalized_value)
-df_norm['TE_for_50pctCut_norm'] = 1 - _minmax(df_norm['TE_for_50pctCut'].values)
-
-# Compute composite Room for Maneuver score as average of normalized metrics
-# Equal weighting: each metric contributes 20% to the final score
+# Early-focused Room-for-Maneuver score
 df_norm['Room_for_Maneuver_Score'] = (
-    df_norm['Slope_at_2pct_norm'] * 0.20 +
-    df_norm['Elasticity_at_2pct_norm'] * 0.20 +
-    df_norm['AUC_to_5pctTE_norm'] * 0.20 +
-    df_norm['MaxCut_at_5pctTE_norm'] * 0.20 +
-    df_norm['TE_for_50pctCut_norm'] * 0.20
+      1/3 * df_norm['C_at_1pct_norm'] +
+      1/3 * df_norm['AUC_to_2pctTE_norm'] +
+      1/3 * df_norm['TE_for_50pctCut_norm']
 )
-
-# Adjust by sector volatility to account for inherent risk differences
-df_norm = df_norm.merge(vol_df, on="Sector", how="left")
-df_norm["Room_for_Maneuver_Score_Adjusted"] = (
-    df_norm["Room_for_Maneuver_Score"] / df_norm["Sector Volatility"]
-)
-
-print(f"✓ Room for Maneuver Score computed for all sectors and periods\n")
-
 
 
 
 # =============================================================================
-# STEP 7: PLOT ROOM FOR MANEUVER SCORE EVOLUTION
+# STEP 5: PLOT ROOM FOR MANEUVER SCORE EVOLUTION
 # =============================================================================
 
 print("\nGenerating plots...")
 
-# # Plot 1: Raw Room for Maneuver Score
-# plot_sector_evolution(
-#     df_norm,
-#     value_col="Room_for_Maneuver_Score",
-#     title="Room for Maneuver Score Evolution by Sector",
-#     ylabel="Room for Maneuver Score (0-1)"
-# )
-
-# # Plot 2: Volatility-Adjusted Room for Maneuver Score
-# plot_sector_evolution(
-#     df_norm,
-#     value_col="Room_for_Maneuver_Score_Adjusted",
-#     title="Volatility-Adjusted Room for Maneuver Score Evolution by Sector",
-#     ylabel="Adjusted Room for Maneuver Score"
-# )
 
 
 
 print("\n✓ Script completed successfully")
-# Save the normalized dataframe with scores
+# # Save the normalized dataframe with scores
 output_file_scores = "results/room_for_maneuver/room_for_maneuver_scores_by_period.xlsx"
 
 
-
-df_norm["Room_for_Maneuver_Score"] = df_norm['Room_for_Maneuver_Score_Adjusted']
 # Sort by period
 PERIODS = {
     "0321": "Mar 2021",
@@ -448,13 +339,64 @@ scored_panel = (
         .apply(normalize_within_period)
         .reset_index(drop=True)
     )
-print(scored_panel)
-
-# Plot 3: Normalized 
+# Plot metric 1: 
 plot_sector_evolution(
     scored_panel,
-    value_col="Room_for_Maneuver_Score",
-    title="Normalized Volatility-Adjusted Room for Maneuver Score Evolution by Sector",
+    value_col='C_at_1pct',
+    title="Carbon reduction at 1% TE",
+    ylabel="Carbon reduction at 1% TE"
+)
+
+#0.90 for Health Care → at TE=1%, the sector achieves 90% of all the carbon reduction it could ever achieve (up to 5% TE).
+#0.30 for Utilities → at TE=1%, only 30% of its max reduction is achieved.
+
+# Plot metric 2: 
+plot_sector_evolution(
+    scored_panel,
+    value_col='AUC_to_2pctTE',
+    title="Area under the frontier up to 2% TE (AUC0–2%)",
+    ylabel="Area under the frontier up to 2% TE (AUC0–2%)"
+)
+# Plot metric 3
+plot_sector_evolution(
+    scored_panel,
+    value_col='TE_for_50pctCut',
+    title="TE required for 50% of maximum decarbonizationr",
+    ylabel="TE required for 50% of maximum decarbonization"
+)
+plot_sector_evolution(
+    scored_panel,
+    value_col='Elasticity_early',
+    title="Elasticity from TE_min to 2% TE",
+    ylabel="Elasticity (TE_min → 2%)"
+)
+
+# Plot room for maneuver score
+plot_sector_evolution(
+    scored_panel,
+    value_col='Room_for_Maneuver_Score',
+    title="Room for Maneuver Score",
     ylabel="Room_for_Maneuver_Score"
 )
-scored_panel[['Sector', 'Period', 'Room_for_Maneuver_Score']].to_excel(output_file_scores, index=False)
+
+df_norm['Room_for_Maneuver_Score'] = (
+      1/3 * df_norm['C_at_1pct_norm'] +
+      1/3* df_norm['TE_for_50pctCut_norm'] +
+      1/3 * df_norm['Elasticity_early_norm']
+)
+scored_panel = (
+        df_norm
+        .groupby("Period", group_keys=False, observed=True)
+        .apply(normalize_within_period)
+        .reset_index(drop=True)
+    )
+# Plot room for maneuver score
+plot_sector_evolution(
+    scored_panel,
+    value_col='Room_for_Maneuver_Score',
+    title="Room for Maneuver Score",
+    ylabel="Room_for_Maneuver_Score"
+)
+
+scored_panel[['Sector', 'Period', 'Room_for_Maneuver_Score', 'C_at_1pct', 'AUC_to_2pctTE','TE_for_50pctCut']].to_excel(output_file_scores, index=False)
+

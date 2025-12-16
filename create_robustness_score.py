@@ -49,6 +49,9 @@ from plot_functions import plot_sector_evolution
 # Target tracking error in basis points
 TARGET_TE_BPS = 200
 
+# Tracking error mode: "annualized" or "daily"
+TE_MODE = "daily" # "annualized" or "daily"
+
 # Trading days per year for annualization
 TRADING_DAYS_PER_YEAR = 252
 
@@ -62,14 +65,6 @@ PERIODS = ["0321", "0621", "0921", "1221", "0322", "0622", "0922", "1222",
 # =============================================================================
 
 def load_data():
-    """
-    Load benchmark returns and volatility data.
-
-    Returns
-    -------
-    tuple
-        (benchmark_sectors_daily_returns, sector_annualized_volatility_by_quarter)
-    """
     print("Loading benchmark data...")
 
     benchmark_sectors_daily_returns = pd.read_excel(
@@ -83,16 +78,27 @@ def load_data():
         dtype={'period': str}
     )
 
-    print(f"Loaded benchmark data")
+    # NEW: load daily (non-annualised) volatility
+    sector_daily_volatility_by_quarter = pd.read_excel(
+        "data/benchmark_returns_volatility/sector_daily_volatility_by_quarter.xlsx",
+        dtype={'period': str}
+    )
+
+    print("Loaded benchmark data")
     print(f"   - Daily returns shape: {benchmark_sectors_daily_returns.shape}")
-    print(f"   - Volatility records: {len(sector_annualized_volatility_by_quarter)}")
+    print(f"   - Annualized volatility records: {len(sector_annualized_volatility_by_quarter)}")
+    print(f"   - Daily volatility records: {len(sector_daily_volatility_by_quarter)}")
 
-    return benchmark_sectors_daily_returns, sector_annualized_volatility_by_quarter
+    return (
+        benchmark_sectors_daily_returns,
+        sector_annualized_volatility_by_quarter,
+        sector_daily_volatility_by_quarter
+    )
 
 
-def compute_tracking_error(r_b, r_d):
+def compute_tracking_error(r_b, r_d, mode="annualized"):
     """
-    Compute annualized tracking error from benchmark and portfolio returns.
+    Compute tracking error between benchmark and portfolio returns.
 
     Parameters
     ----------
@@ -100,20 +106,29 @@ def compute_tracking_error(r_b, r_d):
         Benchmark daily returns
     r_d : pd.Series
         Portfolio daily returns
+    mode : str
+        "annualized" or "daily"
 
     Returns
     -------
     float
-        Annualized tracking error
+        Tracking error in the chosen unit
     """
-    # Active returns
     active = r_d - r_b
-  
-    #Daily TE → annualized
-    te_daily = active.std()
-    te_ann = te_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
 
-    return te_ann
+    # Daily TE
+    te_daily = active.std()
+    print("TE_DAILY: ", te_daily)
+    print("TE DAILY -> ANNUALIZED: ", te_daily * np.sqrt(TRADING_DAYS_PER_YEAR))
+    if mode == "daily":
+        return te_daily
+
+    elif mode == "annualized":
+        return te_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
+
+    else:
+        raise ValueError(f"Unknown TE mode: {mode}. Use 'annualized' or 'daily'.")
+
 
 
 def process_sector(sector, period, benchmark_return_index_period, optimal_portfolios_all_te):
@@ -178,12 +193,14 @@ def process_sector(sector, period, benchmark_return_index_period, optimal_portfo
         return np.nan
 
     # Compute tracking error
-    te_ann = compute_tracking_error(r_b, r_d)
+    te_ann = compute_tracking_error(r_b, r_d, mode=TE_MODE)
 
     return te_ann
 
 
-def process_period(period, benchmark_sectors_daily_returns, sector_annualized_volatility_by_quarter):
+def process_period(period, benchmark_sectors_daily_returns,
+                   sector_annualized_volatility_by_quarter,
+                   sector_daily_volatility_by_quarter):
     """
     Process a single time period to compute tracking errors and robustness scores.
 
@@ -240,7 +257,9 @@ def process_period(period, benchmark_sectors_daily_returns, sector_annualized_vo
             sector_te[sector] = np.nan
 
     # Build DataFrame
-    te_df = pd.DataFrame.from_dict(sector_te, orient="index", columns=["annualized_TE"])
+    colname = "annualized_TE" if TE_MODE == "annualized" else "daily_TE"
+
+    te_df = pd.DataFrame.from_dict(sector_te, orient="index", columns=[colname])
     te_df = te_df.reset_index().rename(columns={'index': 'sector'})
 
     # Save TE results for this period
@@ -252,25 +271,32 @@ def process_period(period, benchmark_sectors_daily_returns, sector_annualized_vo
         sector_annualized_volatility_by_quarter['period'] == period
     ]
 
+    sector_daily_volatility_period = sector_daily_volatility_by_quarter[
+    sector_daily_volatility_by_quarter['period'] == period
+    ]
+
     if sector_annualized_volatility_period.empty:
         print(f"      WARNING: No volatility data found for period {period}")
         print(f"      Skipping period {period}\n")
         return None
 
-    # Merge TE and volatility
-    merged = pd.merge(te_df, sector_annualized_volatility_period, on="sector", how="inner")
+    print(sector_daily_volatility_period)
+    print(te_df)
+    if TE_MODE == "annualized":
+        VOL_COL = "annualized_volatility"
+        # Merge TE and volatility
+        merged = te_df.merge(sector_annualized_volatility_period, on="sector", how="inner")
 
-    if merged.empty:
-        print(f"      WARNING: No matching sectors between TE and volatility for period {period}")
-        print(f"      Skipping period {period}\n")
-        return None
-
+    else:
+        VOL_COL = "daily_volatility"
+        merged = te_df.merge(sector_daily_volatility_period, on="sector", how="inner")
+    
     # ---- Soft volatility adjustment ----
     alpha = 0.5   # Softening exponent
 
-    merged["Robustness_Ratio"] = merged["annualized_TE"] / (
-        merged["annualized_volatility"] ** alpha
-    )
+    # or "annualized_volatility"
+    merged["Robustness_Ratio"] = merged[colname] / (merged[VOL_COL] ** alpha)
+
 
     # ---- Within-period min-max normalization (1 = most robust) ----
     ratio_max = merged["Robustness_Ratio"].max()
@@ -282,8 +308,7 @@ def process_period(period, benchmark_sectors_daily_returns, sector_annualized_vo
 
     print(f"      Computed robustness scores for {len(merged)} sectors")
 
-    return merged[['sector', 'period', 'annualized_TE', 'annualized_volatility',
-                   'Robustness_Ratio', 'Robustness_Score']]
+    return merged[['sector', 'period', colname, VOL_COL, 'Robustness_Ratio', 'Robustness_Score']]
 
 
 def validate_robustness_scores(robust_df):
@@ -328,8 +353,8 @@ def validate_robustness_scores(robust_df):
     print(f"   - Total records: {len(robust_df)}")
     print(f"   - Unique sectors: {robust_df['sector'].nunique()}")
     print(f"   - Unique periods: {robust_df['period'].nunique()}")
-    print(f"   - Mean TE: {robust_df['annualized_TE'].mean():.4f}")
-    print(f"   - Mean Volatility: {robust_df['annualized_volatility'].mean():.4f}")
+    print(f"   - Mean TE: {robust_df[f"{TE_MODE}_TE"].mean():.4f}")
+    print(f"   - Mean Volatility: {robust_df[f"{TE_MODE}_volatility"].mean():.4f}")
     print(f"   - Mean Robustness Score: {robust_df['Robustness_Score'].mean():.4f}")
 
 
@@ -346,23 +371,23 @@ def plot_robustness_metrics(robust_df_plot):
     print("GENERATING PLOTS")
     print("="*80)
 
-    # Plot 1: Annualized Tracking Error
-    print("\nPlotting Annualized Tracking Error...")
+    # Plot 1: Tracking Error
+    print("\nPlotting Tracking Error...")
     plot_sector_evolution(
         df=robust_df_plot,
-        value_col='annualized_TE',
-        title='Annualized Tracking Error Evolution by Sector (2021-2023)',
-        ylabel='Annualized Tracking Error',
+        value_col=f'{TE_MODE}_TE',
+        title=f'{TE_MODE} Tracking Error Evolution by Sector (2021-2023)',
+        ylabel=f'{TE_MODE} Tracking Error',
         figsize=(12, 7)
     )
 
-    # Plot 2: Annualized Volatility
-    print("Plotting Annualized Volatility...")
+    # Plot 2: Volatility
+    print("Plotting Volatility...")
     plot_sector_evolution(
         df=robust_df_plot,
-        value_col='annualized_volatility',
-        title='Annualized Volatility Evolution by Sector (2021-2023)',
-        ylabel='Annualized Volatility',
+        value_col=f'{TE_MODE}_volatility',
+        title=f'{TE_MODE} Volatility Evolution by Sector (2021-2023)',
+        ylabel=f'{TE_MODE} Volatility',
         figsize=(12, 7)
     )
 
@@ -408,18 +433,19 @@ def main():
     os.makedirs("results/robustness", exist_ok=True)
 
     # Load benchmark data
-    benchmark_sectors_daily_returns, sector_annualized_volatility_by_quarter = load_data()
+    (benchmark_sectors_daily_returns, sector_annualized_volatility_by_quarter, sector_daily_volatility_by_quarter) = load_data()
+
 
     # Process all periods
     robustness_records = []
 
     for period in PERIODS:
         result = process_period(
-            period,
-            benchmark_sectors_daily_returns,
-            sector_annualized_volatility_by_quarter
-        )
-
+        period,
+        benchmark_sectors_daily_returns,
+        sector_annualized_volatility_by_quarter,
+        sector_daily_volatility_by_quarter
+    )
         if result is not None:
             robustness_records.append(result)
 

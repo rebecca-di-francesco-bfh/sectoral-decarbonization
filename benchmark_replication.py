@@ -36,7 +36,7 @@ def main():
     # Initialize list to store all period results
     all_sector_portfolios = []
     all_sector_volatilities = []
-
+    all_sector_daily_vols = []
     for period in ["0321","0621", "0921", "1221", "0322", "0622", "0922", "1222", "0323", "0623", "0923", "1223"]:
         print("\n" + "="*80)
         print(f"PROCESSING PERIOD: {period}")
@@ -234,6 +234,15 @@ def main():
             'annualized_volatility': annualized_vol_quarterly.values
         })
         all_sector_volatilities.append(volatility_df)
+        # Save daily (non-annualised) volatility for the 3-month window
+        daily_vol_df = pd.DataFrame({
+            'period': period,
+            'sector': daily_vol_quarterly.index,
+            'daily_volatility': daily_vol_quarterly.values
+        })
+
+        # Append to a new list to save later
+        all_sector_daily_vols.append(daily_vol_df)
 
         print(f"   ✓ Computed returns for {len(sector_portfolio_returns)} sectors")
         print(f"   ✓ Period {period} complete!\n")
@@ -255,6 +264,14 @@ def main():
     print(f"✓ Combined quarterly volatilities for all periods")
     print("\nDone!")
 
+    # Combine and save DAILY (non-annualised) volatilities for all periods
+    combined_daily_vols = pd.concat(all_sector_daily_vols, axis=0, ignore_index=True)
+    combined_daily_vols.to_excel(
+        "data/benchmark_returns_volatility/sector_daily_volatility_by_quarter.xlsx",
+        index=False
+    )
+
+    print("✓ Saved daily (non-annualised) volatility to 'sector_daily_volatility_by_quarter.xlsx'")
 
     # --- Compute Annualized Volatility by Sector (2021–2023) ---
 

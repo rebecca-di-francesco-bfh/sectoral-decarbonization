@@ -8,6 +8,8 @@ from pathlib import Path
 import plotly.graph_objects as go
 import json
 
+OUT_OF_SAMPLE_FREQ = 'daily'
+
 with open("metric_descriptions.json", "r") as f:
     METRIC_DESCRIPTIONS = json.load(f)
 
@@ -204,13 +206,6 @@ selected_period_raw = available_periods_raw[
 ]
 
 
-
-# ---------------------------------------------------------
-# DYNAMIC HEADER (styled, sector in purple)
-# ---------------------------------------------------------
-# ---------------------------------------------------------
-# DYNAMIC HEADER — SINGLE LINE TITLE WITH GOLD HIGHLIGHTS
-# ---------------------------------------------------------
 
 HIGHLIGHT = "#F2F2F2"   # soft luminous white
 
@@ -441,80 +436,64 @@ st.caption("TE–Carbon frontier and marginal carbon gains for the Consumer Disc
 # ---------------------------------------------------------
 st.markdown('<div class="section-title">Room for Maneuver — Key Metrics</div>', unsafe_allow_html=True)
 
+rfm_panel = pd.read_excel(
+    "results/room_for_maneuver/room_for_maneuver_scores_by_period.xlsx",
+    dtype={"Period": str}
+)
 
-# Convert TE from bps → percent for consistency with formulas
-te_pct = te / 100.0
-cr_pct = cr
+rfm_row = rfm_panel[
+    (rfm_panel["Sector"] == sector_name) &
+    (rfm_panel["Period"] == selected_period_raw)
+].iloc[0]
 
-# --- Helper functions ---
-def interp_at_x(x, xgrid, ygrid):
-    if x <= xgrid.min():
-        return ygrid[0]
-    if x >= xgrid.max():
-        return ygrid[-1]
-    idx = np.searchsorted(xgrid, x)
-    x0, x1 = xgrid[idx-1], xgrid[idx]
-    y0, y1 = ygrid[idx-1], ygrid[idx]
-    return y0 + (y1-y0)*(x - x0)/(x1 - x0 + 1e-12)
+c_at_1pct   = rfm_row["C_at_1pct"]
+auc_2pct    = rfm_row["AUC_to_2pctTE"]
 
-def finite_slope(x, xgrid, ygrid, h=0.05):
-    y_plus = interp_at_x(x + h, xgrid, ygrid)
-    y_minus = interp_at_x(x - h, xgrid, ygrid)
-    return (y_plus - y_minus) / (2*h)
+te50_raw = rfm_row["TE_for_50pctCut"]
+te50_label = (
+    f"{te50_raw * 10000:.0f} bps" if pd.notna(te50_raw) else "Not reached"
+)
 
-def elasticity_at_x(x, xgrid, ygrid):
-    y = interp_at_x(x, xgrid, ygrid)
-    slope = finite_slope(x, xgrid, ygrid)
-    if y == 0:
-        return np.nan
-    return slope * (x / y)
+room_for_maneuver_score = rfm_row["Room_for_Maneuver_Score"]
 
-def auc_to_xmax(xgrid, ygrid, xmax=5.0):
-    mask = xgrid <= xmax
-    X = xgrid[mask]
-    Y = ygrid[mask]
-    if len(X) < 2:
-        return np.nan
-    return np.trapz(Y, X)
-
-# --- Compute KPIs ---
-slope_2pct     = finite_slope(2.0, te_pct, cr_pct)
-elasticity     = elasticity_at_x(2.0, te_pct, cr_pct)
-auc_5pct       = auc_to_xmax(te_pct, cr_pct, xmax=5.0)
-max_cut_5pct   = interp_at_x(5.0, te_pct, cr_pct)
-
-# TE required for 50% reduction
-target = 50.0
-indices = np.where(cr_pct >= target)[0]
-if len(indices) == 0:
-    te50_label = "Not reached"
-else:
-    k = indices[0]
-    te50 = te_pct[k] * 100.0   # convert back to bps
-    te50_label = f"{te50:.0f} bps"
-
-
-col1, col2, col3, col4, col5 = st.columns(5)
+col1, col2, col3  = st.columns(3)
 
 with col1:
-    info_metric("Slope @ 2% TE", f"{slope_2pct:.2f}",
-                help_text=METRIC_DESCRIPTIONS["slope_2pct"])
+    info_metric("Early carbon reduction (1% TE)", f"{c_at_1pct*100:.0f}%",
+                help_text=METRIC_DESCRIPTIONS["c_at_1pct"])
 
 with col2:
-    info_metric("Elasticity @ 2% TE", f"{elasticity:.2f}",
-                help_text="Elasticity of carbon reduction at 2% TE")
+    info_metric("AUC ≤ 2% TE", f"{auc_2pct:.2f}",
+                help_text=METRIC_DESCRIPTIONS["auc_2pct"])
 
 with col3:
-    info_metric("AUC ≤ 5% TE", f"{auc_5pct:.2f}",
-                help_text=METRIC_DESCRIPTIONS["auc_5pct"])
+    info_metric("TE for 50% reduction", te50_label,
+                help_text=METRIC_DESCRIPTIONS["te_50pct"])
 
-with col4:
-    info_metric("Max Cut @ 5% TE", f"{max_cut_5pct:.1f}%",
-                help_text=METRIC_DESCRIPTIONS["max_cut_5pct"])
+with st.expander("📘 Interpretation of the Room for Maneuver metrics"):
+    st.markdown(f"""
+    <div style='line-height:1.55; font-size:15px;'>
 
-with col5:
-    info_metric("Min TE for 50% Cut", te50_label,
-                help_text=METRIC_DESCRIPTIONS["min_te_50pct_cut"])
+    <p><b>Early carbon reduction (1% TE)</b><br>
+    Sector <b>{sector_name}</b> can achieve 
+    <b>{c_at_1pct*100:.0f}%</b> of its total achievable decarbonization 
+    (<b>{cr[-1]:.0f}%</b> at 5% TE) while staying within a very tight 
+    tracking-error budget of 1%. This reflects how much decarbonization is 
+    available with <i>minimal</i> active risk.</p>
+
+    <p><b>Early decarbonization space (AUC 0–2% TE)</b><br>
+    The sector's AUC score of <b>{auc_2pct:.2f}</b> in the 0–2% TE region indicates 
+    the amount of decarbonization potential available before TE constraints become 
+    restrictive. Higher values imply greater room to maneuver under tight TE budgets.</p>
+
+    <p><b>TE required for 50% of maximum decarbonization</b><br>
+    The sector requires <b>{te50_raw *10000:.0f} bps</b> of tracking error to 
+    achieve half of its maximum attainable decarbonization. 
+    Lower TE thresholds indicate easier access to mid-level decarbonization 
+    within realistic benchmark-relative risk budgets.</p>
+
+    </div>
+    """, unsafe_allow_html=True)
 
 # ---------------------------------------------------------
 # FLEXIBILITY METRICS (period 1223)
@@ -677,28 +656,28 @@ if robust_cd.empty:
 else:
     row = robust_cd.iloc[0]
 
-    te_ann       = float(row["annualized_TE"])          # decimal (e.g. 0.02)
-    vol_ann      = float(row["annualized_volatility"])  # decimal
+    te_ann       = float(row[f"{OUT_OF_SAMPLE_FREQ}_TE"])          # decimal (e.g. 0.02)
+    vol_ann      = float(row[f"{OUT_OF_SAMPLE_FREQ}_volatility"])  # decimal
     rob_ratio    = float(row["Robustness_Ratio"])
     rob_score    = float(row["Robustness_Score"])
 
     te_bps       = te_ann * 10000.0
     vol_pct      = vol_ann * 100.0
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2 = st.columns(2)
 
     with col1:
         info_metric(
-            label="Annualized TE (bps)",
+            label=f"Out-of-sample Tracking Error (bps)",
             value=f"{te_bps:.1f}",
-            help_text=METRIC_DESCRIPTIONS["annualized_te"]
+            help_text=METRIC_DESCRIPTIONS[f"{OUT_OF_SAMPLE_FREQ}_te"]
         )
 
     with col2:
         info_metric(
-            label="Annualized Volatility (%)",
+            label=f"Sector Benchmark Volatility",
             value=f"{vol_pct:.2f}%",
-            help_text=METRIC_DESCRIPTIONS["annualized_volatility"]
+            help_text=METRIC_DESCRIPTIONS[f"{OUT_OF_SAMPLE_FREQ}_volatility"]
         )
 
 
@@ -724,69 +703,181 @@ sens_norm   = float(row["Sens_norm"])
 robust_norm = float(row["Robust_norm"])
 dri_score   = float(row["DRI"])
 
-# ---------- THREE COLUMNS ----------
-col1, col2 = st.columns([1.2, 0.8])
+# ---------- THREE COLUMNS (Radar • DRI Table • Compare) ----------
+col1, col2, col3 = st.columns([1.2, 0.8, 0.8])
 
 # ---------------------------------------------------------
-# 1) Radar Chart
+# 1) Compare selector (col3)
+# ---------------------------------------------------------
+with col3:
+    # Remove the currently selected sector from the list
+    compare_options = ["None"] + [s for s in sectors if s != sector_name]
+
+    compare_sector = st.selectbox(
+        "Compare with:",
+        options=compare_options,
+        index=0,
+        key="compare_selector"
+    )
+
+
+# ---------------------------------------------------------
+# Load comparison sector data (if chosen)
+# ---------------------------------------------------------
+if compare_sector != "None":
+    comp_row = dri_df.loc[dri_df["Sector"] == compare_sector].iloc[0]
+
+    comp_room_norm   = float(comp_row["Room_norm"])
+    comp_flex_norm   = float(comp_row["Flex_norm"])
+    comp_sens_norm   = float(comp_row["Sens_norm"])
+    comp_robust_norm = float(comp_row["Robust_norm"])
+    comp_dri_score   = float(comp_row["DRI"])
+
+# ---------------------------------------------------------
+# 2) RADAR CHART with overlay if comparing
 # ---------------------------------------------------------
 with col1:
     labels = ["Room for Maneveur", "Flexibility", "Sensitivity", "Robustness"]
-    values = [room_norm, flex_norm, sens_norm, robust_norm] + [room_norm]
+    
+    # Main sector polygon
+    r_main = [room_norm, flex_norm, sens_norm, robust_norm, room_norm]
+    
+    fig_radar = go.Figure()
 
-    fig_radar = go.Figure(go.Scatterpolar(
-        r=values,
+    fig_radar.add_trace(go.Scatterpolar(
+        r=r_main,
         theta=labels + [labels[0]],
         fill="toself",
-        line=dict(color="#6A5AE0", width=2),
+        name=sector_name,
+        line=dict(color="#6A5AE0", width=3),
+        opacity=0.85
     ))
+
+    # Add comparison polygon
+    if compare_sector != "None":
+        r_comp = [
+            comp_room_norm,
+            comp_flex_norm,
+            comp_sens_norm,
+            comp_robust_norm,
+            comp_room_norm
+        ]
+        
+        fig_radar.add_trace(go.Scatterpolar(
+            r=r_comp,
+            theta=labels + [labels[0]],
+            fill="toself",
+            name=compare_sector,
+            line=dict(color="#FF9F1C", width=3),
+            opacity=0.55
+        ))
 
     fig_radar.update_layout(
         polar=dict(
             radialaxis=dict(range=[0,1], showticklabels=False, ticks=""),
             angularaxis=dict(tickfont=dict(size=12)),
         ),
-        showlegend=False,
+        showlegend=True,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=-0.25,
+            xanchor="center",
+            x=0.5
+        ),
         width=500,
-        height=360,
-        margin=dict(l=30, r=30, t=30, b=30),
+        height=400,
+        margin=dict(l=30, r=30, t=40, b=40),
         template="plotly_dark"
     )
 
     st.plotly_chart(fig_radar, config={"displayModeBar": False})
 
-
 # ---------------------------------------------------------
-# 2) Center table: DRI Score only
+# 3) DRI SCORE TABLE + DIMENSION SCORE TABLE (col2)
+#     → Fully compares both sectors if selected
 # ---------------------------------------------------------
 with col2:
-    st.markdown("#### Overall DRI Score")
-    st.markdown(
-        f"""
-        <table style="width:100%; border:1px solid #444; border-radius:6px; padding:6px;">
-            <tr>
-                <td style="font-size:16px; font-weight:600; color:white;">DRI</td>
-                <td style="font-size:20px; font-weight:700; color:#9BE7FF; text-align:right;">
-                    {dri_score:.3f}
-                </td>
-            </tr>
-        </table>
-        """,
-        unsafe_allow_html=True,
-    )
 
+    # ---------- DRI SCORE ----------
+    st.markdown("#### Overall DRI Score")
+
+    if compare_sector == "None":
+        # Single-sector table
+        st.markdown(
+            f"""
+            <table style="width:100%; border:1px solid #444; border-radius:6px; padding:6px;">
+                <tr>
+                    <td style="font-size:16px; font-weight:600; color:white;">DRI</td>
+                    <td style="font-size:20px; font-weight:700; color:#9BE7FF; text-align:right;">
+                        {dri_score:.3f}
+                    </td>
+                </tr>
+            </table>
+            """, unsafe_allow_html=True)
+    else:
+        # Two-column comparison table
+        st.markdown(
+            f"""
+            <table style="width:100%; border:1px solid #444; border-radius:6px; padding:6px;">
+                <tr>
+                    <th></th>
+                    <th style='text-align:right;'>{sector_name}</th>
+                    <th style='text-align:right;'>{compare_sector}</th>
+                </tr>
+                <tr>
+                    <td>DRI</td>
+                    <td style='text-align:right; color:#9BE7FF;'>{dri_score:.3f}</td>
+                    <td style='text-align:right; color:#FFCE9B;'>{comp_dri_score:.3f}</td>
+                </tr>
+            </table>
+            """, unsafe_allow_html=True)
+
+    # ---------- DIMENSION SCORES ----------
     st.markdown("#### Dimension Scores")
 
-    st.markdown(
-        f"""
-        <table style="width:100%; border:1px solid #444; border-radius:6px; padding:6px;">
-            <tr><th style='text-align:left;'>Dimension</th><th style='text-align:right;'>Score</th></tr>
-            <tr><td>Room for Maneuver</td><td style='text-align:right; color:#A2FFAA;'>{room_norm:.3f}</td></tr>
-            <tr><td>Flexibility</td><td style='text-align:right; color:#A2FFAA;'>{flex_norm:.3f}</td></tr>
-            <tr><td>Sensitivity</td><td style='text-align:right; color:#A2FFAA;'>{sens_norm:.3f}</td></tr>
-            <tr><td>Robustness</td><td style='text-align:right; color:#A2FFAA;'>{robust_norm:.3f}</td></tr>
-        </table>
-        """,
-        unsafe_allow_html=True,
-    )
+    if compare_sector == "None":
+        # Single-sector table
+        st.markdown(
+            f"""
+            <table style="width:100%; border:1px solid #444; border-radius:6px; padding:6px;">
+                <tr><th>Dimension</th><th style='text-align:right;'>Score</th></tr>
+                <tr><td>Room for Maneuver</td><td style='text-align:right; color:#A2FFAA;'>{room_norm:.3f}</td></tr>
+                <tr><td>Flexibility</td><td style='text-align:right; color:#A2FFAA;'>{flex_norm:.3f}</td></tr>
+                <tr><td>Sensitivity</td><td style='text-align:right; color:#A2FFAA;'>{sens_norm:.3f}</td></tr>
+                <tr><td>Robustness</td><td style='text-align:right; color:#A2FFAA;'>{robust_norm:.3f}</td></tr>
+            </table>
+            """, unsafe_allow_html=True)
 
+    else:
+        # Two-column comparison table
+        st.markdown(
+            f"""
+            <table style="width:100%; border:1px solid #444; border-radius:6px; padding:6px;">
+                <tr>
+                    <th>Dimension</th>
+                    <th style='text-align:right;'>{sector_name}</th>
+                    <th style='text-align:right;'>{compare_sector}</th>
+                </tr>
+                <tr>
+                    <td>Room for Maneuver</td>
+                    <td style='text-align:right; color:#A2FFAA;'>{room_norm:.3f}</td>
+                    <td style='text-align:right; color:#FFD8A2;'>{comp_room_norm:.3f}</td>
+                </tr>
+                <tr>
+                    <td>Flexibility</td>
+                    <td style='text-align:right; color:#A2FFAA;'>{flex_norm:.3f}</td>
+                    <td style='text-align:right; color:#FFD8A2;'>{comp_flex_norm:.3f}</td>
+                </tr>
+                <tr>
+                    <td>Sensitivity</td>
+                    <td style='text-align:right; color:#A2FFAA;'>{sens_norm:.3f}</td>
+                    <td style='text-align:right; color:#FFD8A2;'>{comp_sens_norm:.3f}</td>
+                </tr>
+                <tr>
+                    <td>Robustness</td>
+                    <td style='text-align:right; color:#A2FFAA;'>{robust_norm:.3f}</td>
+                    <td style='text-align:right; color:#FFD8A2;'>{comp_robust_norm:.3f}</td>
+                </tr>
+            </table>
+            """, unsafe_allow_html=True)

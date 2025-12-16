@@ -68,7 +68,8 @@ def run_sector_optimisation(sector_name, sector, R, cov_type="raw", cache_dir="c
     # Validate inputs
     assert np.isclose(w_bench.sum(), 1.0), "Benchmark weights must sum to 1"
     assert not np.isnan(c_vec).any(), "Carbon intensity values cannot be NaN"
-
+    print(R.iloc[:-3].Date)
+    R = R.iloc[:-3]
     # Clean returns data (remove Date column and any rows with NaN)
     R_clean = R.drop(columns=['Date']).dropna()
     stock_labels = R_clean.columns

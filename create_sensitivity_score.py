@@ -70,12 +70,12 @@ def sensitivity_kpis_from_trials(
     turnovers = []
     cosines   = []
     carbon_losses_pp = []   # baseline reduction minus trial reduction (pp)
-    te_drifts_bps    = []   # |TE_trial - TE_baseline| in bps
+     # |TE_trial - TE_baseline| in bps
 
     for w_t, te_t in zip(w_trials, te_trials_annual):
         if w_t is None or not np.all(np.isfinite(w_t)) or (te_t is None) or not np.isfinite(te_t):
             turnovers.append(np.nan); cosines.append(np.nan)
-            carbon_losses_pp.append(np.nan); te_drifts_bps.append(np.nan)
+            carbon_losses_pp.append(np.nan)
             continue
 
         # Turnover and Cosine vs baseline optimized
@@ -86,21 +86,17 @@ def sensitivity_kpis_from_trials(
         Rstar_t = carbon_reduction_pct(w_t, w_bench, c_vec)   # in %
         carbon_losses_pp.append(max(0.0, Rstar0 - Rstar_t))
 
-        # TE drift (bps) relative to baseline TE
-        te_drifts_bps.append(abs(te_t - te0) * 10000.0)
 
     # Aggregate KPIs
     kpis = {
         "Median_Turnover_pct":        nanpercentile(turnovers, 50),
         "Median_Cosine":              nanpercentile(cosines, 50),
         "P95_CarbonLoss_pp":          nanpercentile(carbon_losses_pp, 95),
-        "P95_TE_Drift_bps":           nanpercentile(te_drifts_bps, 95),
         # keep handy for plots/debug
         "series": {
             "turnover_pct": np.array(turnovers, dtype=float),
             "cosine":       np.array(cosines, dtype=float),
             "carbon_loss_pp": np.array(carbon_losses_pp, dtype=float),
-            "te_drift_bps":   np.array(te_drifts_bps, dtype=float),
             "baseline": {
                 "w_opt0": w_opt0,
                 "te0_annual": te0,
@@ -272,6 +268,7 @@ for period_tag in periods:
 
         # Load returns for this sector
         R = pd.read_excel(returns_file, sheet_name=sector_name)
+        R = R.iloc[:-3]
         R_clean = R.drop(columns=["Date"]).dropna()
 
         # Benchmark weights + carbon intensity
@@ -309,8 +306,7 @@ for period_tag in periods:
         sensitivity_results[sector_name] = {
             "Median_Turnover_pct": kpis["Median_Turnover_pct"],
             "Median_Cosine": kpis["Median_Cosine"],
-            "P95_CarbonLoss_pp": kpis["P95_CarbonLoss_pp"],
-            "P95_TE_Drift_bps": kpis["P95_TE_Drift_bps"],
+            "P95_CarbonLoss_pp": kpis["P95_CarbonLoss_pp"]
         }
 
     # -------------------------------
@@ -339,42 +335,26 @@ def minmax_norm_grouped(df, col):
         lambda x: (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0
     )
 
-# --- composition sensitivity ---
-df["Inv_Median_Cosine"] = 1 - df["Median_Cosine"]
 
 df["Turnover_norm"] = minmax_norm_grouped(df, "Median_Turnover_pct")
+
+df["Inv_Median_Cosine"] = 1 - df["Median_Cosine"]
 df["Cosine_norm"]   = minmax_norm_grouped(df, "Inv_Median_Cosine")
 
-df["Composition_Sensitivity"] = 0.5 * (
-    df["Turnover_norm"] + df["Cosine_norm"]
-)
-
-# --- outcome sensitivity ---
 df["CarbonLoss_norm"] = minmax_norm_grouped(df, "P95_CarbonLoss_pp")
-df["TEdrift_norm"]    = minmax_norm_grouped(df, "P95_TE_Drift_bps")
 
-df["Outcome_Sensitivity"] = 0.5 * (
-    df["CarbonLoss_norm"] + df["TEdrift_norm"]
-)
-
-
-# df["Sensitivity_Score_raw"] = 1/3 * (
-#     df.groupby("Period")["Composition_Sensitivity"].transform(lambda x: (x - x.min()) / (x.max() - x.min())) +
-#     df.groupby("Period")["Outcome_Sensitivity"].transform(lambda x: (x - x.min()) / (x.max() - x.min()))
-# )
 df["Sensitivity_Score_raw"] =1/3 * (
     df["Turnover_norm"] +  df["Cosine_norm"] +  df["CarbonLoss_norm"])
 
 df["Sensitivity_Score"] = 1 - df["Sensitivity_Score_raw"]
 df["Sensitivity_Score"] = minmax_norm_grouped(df, 'Sensitivity_Score')
+
 # --- save and plot ---
 df.to_excel("results/sensitivity/sensitivity_scores_by_period.xlsx", index=False)
 print("✅ Saved sensitivity scores to results/sensitivity/sensitivity_scores_by_period.xlsx")
 
 # --- plot sensitivity score evolution ---
 from plot_functions import plot_sector_evolution
-
-
 
 
 print("✅ Plotted sensitivity score evolution")

@@ -76,8 +76,9 @@ def process_sector(sector_name, info, data, log_returns_all):
         (sector_name, bands_df, summary_row)
     """
     # Covariance for this sector
+    
     R_clean = log_returns_all[sector_name].drop(columns=['Date'])
-
+    R_clean = R_clean.iloc[:-3]
     if R_clean.isna().any().any():
         print(f"   ⚠️  Warning: NaN values found in {sector_name} returns")
 
@@ -208,21 +209,10 @@ def process_sector(sector_name, info, data, log_returns_all):
     summary_row = {
         "Sector": sector_name,
         "Names (N)": N,
-        "TE cap": "2.0%",
-        "Tracking Error (bps)": f"{info['tracking_error_at_2pct']:.1f}",
-        "Carbon reduction R*": f"{R_star:.1%}",
-        "Carbon saved (abs)": f"{c_b - c_opt:.2f}",
-        "HHI (bench → opt)": f"{hhi_b:.3f} → {hhi_o:.3f}",
-        "Effective N (bench → opt)": f"{1/hhi_b:.1f} → {1/hhi_o:.1f}",
-        "Support size (bench → opt)": f"{(w_bench>1e-4).sum()} → {(w_opt>1e-4).sum()}",
-        "Avg / Median / Max ε-band": f"{avg_bw:.2%} / {med_bw:.2%} / {max_bw:.2%}",
         "90th pct ε-band": f"{bands_df['bandwidth'].quantile(0.9):.2%}",
         "% names at w_min=0": f"{pct_wmin_zero:.1f}%",
-        "L2 lower bound (same obj)": f"{l2_lower_bound:.3f}",
-        "Turnover UB (√N * L2)": f"{np.sqrt(N)*l2_lower_bound:.3f}",
         "Top flexible names": "; ".join(top3_list),
         "Most pinned name": bands_df.loc[bands_df["bandwidth"].idxmin(), "symbol"],
-
         # Raw numeric fields for sorting
         "L2_lower_bound_same_obj": l2_lower_bound,
         "Avg_bandwidth": avg_bw,
