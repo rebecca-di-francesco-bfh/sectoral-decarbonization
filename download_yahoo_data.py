@@ -34,7 +34,7 @@ class YahooDataDownloader:
         # Set up file paths
         self.symbol_file = self.data_dir / "lseg" / "constituents_symbols" / f"symbol_comp_{period}.xlsm"
         self.price_file = self.data_dir / "lseg" / "prices_dividends" / f"price_div_comp_{period}.xlsm"
-        self.output_file = self.data_dir / "yahoo" / f"adj_price_yahoo_comp_{period}.xlsx"
+        self.output_file = self.data_dir /"tests"/ "yahoo" / f"adj_price_yahoo_comp_{period}.xlsx"
 
         # Create output directory if needed
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -59,6 +59,8 @@ class YahooDataDownloader:
 
         # End date: 4 months after
         end_date = period_date + relativedelta(months=4)
+        print("START DATE: ", start_date)
+        print("END DATE: ", end_date)
         return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
 
     def load_symbols(self):
@@ -220,7 +222,7 @@ class YahooDataDownloader:
 
         out = pd.DataFrame(rows)
 
-        fname = f"data/stocks_with_missing_prices/stocks_with_missing_prices_{self.period}.xlsx"
+        fname = f"data/tests/stocks_with_missing_prices/stocks_with_missing_prices_{self.period}.xlsx"
         out.to_excel(fname, index=False)
 
 

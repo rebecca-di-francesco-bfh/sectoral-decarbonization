@@ -21,7 +21,31 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from plot_functions import plot_sector_evolution
+from scipy.stats import spearmanr
 
+def _carbon_weight_alignment(w_bench, carbon_intensity):
+    """
+    Measures alignment between benchmark weights and benchmark carbon contributions.
+
+    High value  → carbon concentrated in large weights (bad for low-TE decarb)
+    Low value   → carbon concentrated in small weights (good for low-TE decarb)
+
+    Returns:
+        Spearman rank correlation in [-1, 1]
+    """
+    w = np.asarray(w_bench, float)
+    c = np.asarray(carbon_intensity, float)
+
+    m = np.isfinite(w) & np.isfinite(c)
+    w, c = w[m], c[m]
+
+    if len(w) < 3:
+        return np.nan
+
+    carbon_contrib = w * c
+
+    corr, _ = spearmanr(w, carbon_contrib)
+    return corr
 
 
 # =============================================================================
@@ -31,8 +55,6 @@ from plot_functions import plot_sector_evolution
 # Define all periods to analyze
 periods = ["0321", "0621", "0921", "1221", "0322", "0622", "0922", "1222", "0323", "0623", "0923", "1223"]
 
-# =============================================================================
-# STEP 2: HELPER FUNCTIONS FOR FRONTIER ANALYSIS
 # =============================================================================
 
 def _interp(te0, te_grid, c_grid):
@@ -237,21 +259,28 @@ for period in periods:
         c_max = np.nanmax(c)
         c_norm = c / c_max if c_max > 0 else c
 
-       # Compute metrics on the normalized frontier (slope & elasticity removed)
-        auc2 = _auc_to(te_frac, c_norm, 0.02) / 0.02      # Early AUC
-        te50 = _te_for_cut(te_frac, c_norm, 0.50)         # TE for 50% of max cut
-        c_at_1pct = _interp(0.01, te_frac, c_norm)        # Early carbon reduction at 1%
+       # --- Frontier-based metrics ---
+        c_at_1pct = _interp(0.01, te_frac, c_norm)
+        te50 = _te_for_cut(te_frac, c_norm, 0.50)
+   
 
-        elasticity_early = _elasticity_te_min_to_2pct(te_frac, c_norm)
-
+        # --- Structural metric: carbon concentration ---
+        w_bench = d.get("w_bench")
+        print(w_bench)
+        carbon_intensity = d.get("carbon_intensity")
+        print(d)
+        alignment = _carbon_weight_alignment(
+        w_bench=w_bench,
+        carbon_intensity=carbon_intensity
+        )
         records.append({
-            "Sector": sector,
-            "Period": period,
-            "C_at_1pct": c_at_1pct,
-            "AUC_to_2pctTE": auc2,
-            "TE_for_50pctCut": te50,
-            "Elasticity_early": elasticity_early
+        "Sector": sector,
+        "Period": period,
+        "C_at_1pct": c_at_1pct,
+        "TE_for_50pctCut": te50,
+        "Alignment": alignment
         })
+
 
 
 
@@ -276,19 +305,16 @@ print(df.head(10))
 
 print("\nComputing Room for Maneuver Score...")
 
-# Create a copy for normalization
 df_norm = df.copy()
 
 df_norm['C_at_1pct_norm'] = _minmax(df_norm['C_at_1pct'])
-df_norm['AUC_to_2pctTE_norm'] = _minmax(df_norm['AUC_to_2pctTE'])
 df_norm['TE_for_50pctCut_norm'] = 1 - _minmax(df_norm['TE_for_50pctCut'])
-df_norm["Elasticity_early_norm"] = _minmax(df_norm["Elasticity_early"])
+df_norm['Alignment_norm'] = 1 - _minmax(df_norm['Alignment'])
 
-# Early-focused Room-for-Maneuver score
 df_norm['Room_for_Maneuver_Score'] = (
       1/3 * df_norm['C_at_1pct_norm'] +
-      1/3 * df_norm['AUC_to_2pctTE_norm'] +
-      1/3 * df_norm['TE_for_50pctCut_norm']
+      1/3 * df_norm['TE_for_50pctCut_norm'] +
+      1/3 * df_norm['Alignment_norm']
 )
 
 
@@ -347,29 +373,21 @@ plot_sector_evolution(
     ylabel="Carbon reduction at 1% TE"
 )
 
-#0.90 for Health Care → at TE=1%, the sector achieves 90% of all the carbon reduction it could ever achieve (up to 5% TE).
-#0.30 for Utilities → at TE=1%, only 30% of its max reduction is achieved.
 
-# Plot metric 2: 
 plot_sector_evolution(
     scored_panel,
-    value_col='AUC_to_2pctTE',
-    title="Area under the frontier up to 2% TE (AUC0–2%)",
-    ylabel="Area under the frontier up to 2% TE (AUC0–2%)"
+    value_col='Alignment',
+    title="Carbon–Weight Alignment (Structural Accessibility)",
+    ylabel="Spearman corr(weight, carbon contribution)"
 )
-# Plot metric 3
+
 plot_sector_evolution(
     scored_panel,
     value_col='TE_for_50pctCut',
     title="TE required for 50% of maximum decarbonizationr",
     ylabel="TE required for 50% of maximum decarbonization"
 )
-plot_sector_evolution(
-    scored_panel,
-    value_col='Elasticity_early',
-    title="Elasticity from TE_min to 2% TE",
-    ylabel="Elasticity (TE_min → 2%)"
-)
+
 
 # Plot room for maneuver score
 plot_sector_evolution(
@@ -379,24 +397,9 @@ plot_sector_evolution(
     ylabel="Room_for_Maneuver_Score"
 )
 
-df_norm['Room_for_Maneuver_Score'] = (
-      1/3 * df_norm['C_at_1pct_norm'] +
-      1/3* df_norm['TE_for_50pctCut_norm'] +
-      1/3 * df_norm['Elasticity_early_norm']
-)
-scored_panel = (
-        df_norm
-        .groupby("Period", group_keys=False, observed=True)
-        .apply(normalize_within_period)
-        .reset_index(drop=True)
-    )
-# Plot room for maneuver score
-plot_sector_evolution(
-    scored_panel,
-    value_col='Room_for_Maneuver_Score',
-    title="Room for Maneuver Score",
-    ylabel="Room_for_Maneuver_Score"
-)
 
-scored_panel[['Sector', 'Period', 'Room_for_Maneuver_Score', 'C_at_1pct', 'AUC_to_2pctTE','TE_for_50pctCut']].to_excel(output_file_scores, index=False)
-
+scored_panel[['Sector', 'Period',
+              'Room_for_Maneuver_Score',
+              'C_at_1pct',
+              'Alignment',
+              'TE_for_50pctCut']].to_excel(output_file_scores, index=False)

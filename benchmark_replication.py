@@ -182,8 +182,20 @@ def main():
         sector_weights = {}
         for sector in sector_map_series.unique():
             tickers = sector_map_series[sector_map_series == sector].index
-            sector_mcap = float_mcap[tickers].sum(axis=1)
-            sector_weights[sector] = float_mcap[tickers].div(sector_mcap, axis=0)
+            # sector_mcap = float_mcap[tickers].sum(axis=1)
+            # sector_weights[sector] = float_mcap[tickers].div(sector_mcap, axis=0)
+            # Compute weights ONCE at start date
+            mcap_0 = float_mcap.loc[next_3m_start_date, tickers]
+            sector_mcap_0 = mcap_0.sum()
+
+            weights_0 = mcap_0 / sector_mcap_0
+
+            # Repeat weights for all dates
+            sector_weights[sector] = pd.DataFrame(
+                np.tile(weights_0.values, (len(float_mcap.index), 1)),
+                index=float_mcap.index,
+                columns=tickers
+            )
 
         # Take close price adjusted for corporate splits and dividends from yahoo to then calculate daily returns
         adj_close_bt = pd.read_excel(f"data/yahoo/adj_price_yahoo_comp_{period}.xlsx")

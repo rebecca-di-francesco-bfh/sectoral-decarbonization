@@ -37,7 +37,7 @@ def main():
     all_sector_portfolios = []
     all_sector_volatilities = []
 
-    for period in ["1222"]:
+    for period in ["0321","0621", "0921", "1221", "0322", "0622", "0922", "1222", "0323", "0623", "0923", "1223"]:
         print("\n" + "="*80)
         print(f"PROCESSING PERIOD: {period}")
         print("="*80)
@@ -117,8 +117,12 @@ def main():
         print("\n[3/5] Handling duplicates...")
         check_duplicate_nans(price_next_3m, ffnosh_next_3m)
         price_agg, ffnosh_agg = aggregate_duplicates(price_next_3m, ffnosh_next_3m)
-        print("   ✓ Aggregated duplicate tickers")
 
+        # Load the Sector info per SYMBOL
+        benchmark_df = pd.read_excel(f"data/datasets/benchmark_weights_carbon_intensity_{period}.xlsx")[['SYMBOL', 'GICS Sector']]
+        sector_map = benchmark_df.set_index("SYMBOL")["GICS Sector"].to_dict()
+        sector_map_series = pd.Series(sector_map)
+        
         # --- Check NaNs in PRICE ---
         print("\n[4/5] Checking for missing values...")
         # --- Check NaNs in PRICE ---
@@ -164,10 +168,6 @@ def main():
         # Calculate float market cap
         float_mcap = price_agg * ffnosh_agg
 
-        # Load the Sector info per SYMBOL
-        benchmark_df = pd.read_excel(f"data/datasets/benchmark_weights_carbon_intensity_{period}.xlsx")[['SYMBOL', 'GICS Sector']]
-        sector_map = benchmark_df.set_index("SYMBOL")["GICS Sector"].to_dict()
-        sector_map_series = pd.Series(sector_map)
 
         # Check for mismatches
         extra_in_float_mcap = float_mcap.columns.difference(sector_map_series.index)
@@ -176,6 +176,7 @@ def main():
         if len(extra_in_float_mcap) > 0:
             print(f"\n   ℹ {len(extra_in_float_mcap)} tickers in float_mcap but not in sector map: {extra_in_float_mcap.tolist()}")
         assert extra_in_sector_map.empty, f"Found unexpected items in sector_map_series but not in float_mcap: {extra_in_sector_map.tolist()}"
+        
 
         # Compute Sector-internal weights daily
         print("\n[5/5] Computing sector portfolios...")
@@ -184,12 +185,26 @@ def main():
             tickers = sector_map_series[sector_map_series == sector].index
             sector_mcap = float_mcap[tickers].sum(axis=1)
             sector_weights[sector] = float_mcap[tickers].div(sector_mcap, axis=0)
-        svb_symbol = "SIVBQ"   # update this after checking your columns
-        svb_weights = sector_weights["Financials"][svb_symbol]
+        FAILED_BANKS = {
+            "SIVBQ": "2023-03-10",
+            "SBNY":  "2023-03-12",
+            "FRCB":  "2023-05-01",
+        }
 
-        print("SVB daily weights:")
-        print(svb_weights.head())
-        print(svb_weights.tail())
+        # --- Apply failed-bank removals (Financials only) ---
+        if "Financials" in sector_weights:
+            w_fin = sector_weights["Financials"].copy()
+            w_fin_before = w_fin.copy()
+            for ticker, failure_date in FAILED_BANKS.items():
+                if ticker in w_fin.columns:
+                    mask = w_fin.index >= pd.Timestamp(failure_date)
+                    w_fin.loc[mask, ticker] = 0.0
+            diff = (w_fin_before - w_fin).abs()
+            print("Total number of non-zero differences:",(diff > 0).sum().sum())
+            # Renormalize weights to sum to 1 each day
+            w_fin = w_fin.div(w_fin.sum(axis=1), axis=0)
+         
+            sector_weights["Financials"] = w_fin
 
         # Take close price adjusted for corporate splits and dividends from yahoo to then calculate daily returns
         adj_close_bt = pd.read_excel(f"data/yahoo/adj_price_yahoo_comp_{period}.xlsx")
@@ -199,11 +214,7 @@ def main():
         nan_columns = adj_close_bt.columns[adj_close_bt.isna().any()]
         assert list(sorted(nan_columns)) == list(sorted(extra_in_float_mcap.tolist()))
         daily_returns_next_3m = adj_close_bt.pct_change().dropna()
-        svb_returns = daily_returns_next_3m[svb_symbol]
 
-        print("SVB daily returns:")
-        print(svb_returns.head())
-        print(svb_returns.tail())
 
         sector_portfolio_returns = {}
 
@@ -217,6 +228,7 @@ def main():
 
                 w = weights_df.loc[common_index, common_tickers]
                 r = daily_returns_next_3m.loc[common_index, common_tickers]
+
 
                 # Save sector daily returns to Excel sheet
                 r.to_excel(writer, sheet_name=sector)
@@ -249,7 +261,13 @@ def main():
         print(f"   ✓ Computed returns for {len(sector_portfolio_returns)} sectors")
         print(f"   ✓ Period {period} complete!\n")
 
+    print("FINALIZING...")
+    print("="*80)
+    combined_sector_portfolio = pd.concat(all_sector_portfolios, axis=0)
+    print(f"✓ Combined {len(all_sector_portfolios)} periods into final dataset")
+    print(f"✓ Total rows: {len(combined_sector_portfolio)}, Columns: {combined_sector_portfolio.shape[1]}")
 
 
+    combined_sector_portfolio.to_excel("data/tests/sector_portfolio_returns_all_periods.xlsx")
 if __name__ == "__main__":
     main()

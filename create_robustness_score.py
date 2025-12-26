@@ -124,6 +124,8 @@ def compute_tracking_error(r_b, r_d, mode="annualized"):
         return te_daily
 
     elif mode == "annualized":
+        print(te_daily * np.sqrt(TRADING_DAYS_PER_YEAR))
+        print(te_daily * np.sqrt(TRADING_DAYS_PER_YEAR) *np.sqrt(12 ))
         return te_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
 
     else:

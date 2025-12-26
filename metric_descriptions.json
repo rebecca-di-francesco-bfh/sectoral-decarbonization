@@ -1,18 +1,16 @@
 {
   "c_at_1pct": "Percentage of total achievable decarbonization (i.e., the maximum reduction attainable up to 5% TE) that is already reached at 1% tracking error.",
-  "slope_2pct": "Local slope of the TE–carbon frontier at 2%, measuring marginal carbon gains per unit TE.",
-  "auc_2pct": "Area under the normalized frontier between 0% and 2% TE, capturing early decarbonization capacity.",
+  "alignment": "Spearman rank correlation between benchmark weights and benchmark carbon contributions.",
   "te_50pct": "Tracking-error level required to achieve 50% of a sector’s maximum decarbonization.",
 
   "avg_bandwidth": "Average ε-Bandwidth:\nAverage width of allowable weight intervals for stocks that still satisfy TE and carbon constraints. Higher = more portfolio flexibility.",
   "median_bandwidth": "Median ε-Bandwidth:\nMedian width of the ε-bands across all stocks. A central measure of portfolio flexibility.",
   "max_bandwidth": "Max ε-Bandwidth:\nMaximum allowable variation range for any individual stock’s weight. Higher = at least one stock has substantial flexibility.",
   "l2_lower_bound": "L2 Lower Bound (Same Objective):\nMinimum L₂ distance between the optimal portfolio and any other equally-optimal portfolio that respects constraints. Higher = more flexibility.",
-  "turnover_upper_bound": "Turnover UB (√N × L₂):\nUpper bound on the turnover needed to move within the set of optimal portfolios. Higher = more flexibility.",
-
+  "annualized_te": "Standard deviation of daily active returns over the out-of-sample window (next three months) then annualized.",
+  "annualized_volatility":  "Daily volatility of the sector benchmark index, computed from out-of-sample (next three months) daily returns and then annualized.",
   "daily_te": "Standard deviation of daily active returns over the out-of-sample window (next three months). Lower tracking error = sector more robust to estimation uncertainty.",
   "daily_volatility": "Daily volatility of the sector benchmark index, computed from out-of-sample (next three months) daily returns. Lower volatility = sector inherently less risky.",
-  "robustness_ratio": "Tracking error divided by the sector’s benchmark volatility raised to a softening exponent (σ^0.5). This metric captures how restrictive the tracking-error constraint is once sector risk is accounted for.",
   "robustness_score": "Robustness Score (0–1):\nNormalized measure of stability. Higher = more robust relative to other sectors within the same period.",
 
   "median_turnover": "Median Turnover (%):\nMedian turnover required to adjust to perturbed optimal portfolios. Higher = more sensitivity to input changes.",

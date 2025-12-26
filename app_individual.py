@@ -169,11 +169,15 @@ available_periods_raw = sorted([
 
 # Display-friendly labels (e.g., "03/2021")
 available_periods_display = [format_period(p) for p in available_periods_raw]
+print(available_periods_display)
 # ---------------------------------------------------------
 # SIDEBAR
 # ---------------------------------------------------------
-sectors = pd.read_excel("data/datasets/dataset_comp_1223.xlsx")['GICS Sector'].unique()
-
+# ---------------------------------------------------------
+sectors = ['Consumer Discretionary', 'Health Care', 'Utilities',
+       'Information Technology', 'Real Estate', 'Materials', 'Financials',
+       'Industrials', 'Energy', 'Communication Services',
+       'Consumer Staples']
 container = st.container(border=True)
 
 with container:
@@ -447,7 +451,7 @@ rfm_row = rfm_panel[
 ].iloc[0]
 
 c_at_1pct   = rfm_row["C_at_1pct"]
-auc_2pct    = rfm_row["AUC_to_2pctTE"]
+alignment = rfm_row["Alignment"]
 
 te50_raw = rfm_row["TE_for_50pctCut"]
 te50_label = (
@@ -462,10 +466,15 @@ with col1:
     info_metric("Early carbon reduction (1% TE)", f"{c_at_1pct*100:.0f}%",
                 help_text=METRIC_DESCRIPTIONS["c_at_1pct"])
 
-with col2:
-    info_metric("AUC ≤ 2% TE", f"{auc_2pct:.2f}",
-                help_text=METRIC_DESCRIPTIONS["auc_2pct"])
 
+with col2:
+    info_metric(
+        "Carbon–Weight Alignment",
+        f"{alignment:.2f}",
+        help_text=METRIC_DESCRIPTIONS["alignment"]
+    )
+
+    
 with col3:
     info_metric("TE for 50% reduction", te50_label,
                 help_text=METRIC_DESCRIPTIONS["te_50pct"])
@@ -481,10 +490,13 @@ with st.expander("📘 Interpretation of the Room for Maneuver metrics"):
     tracking-error budget of 1%. This reflects how much decarbonization is 
     available with <i>minimal</i> active risk.</p>
 
-    <p><b>Early decarbonization space (AUC 0–2% TE)</b><br>
-    The sector's AUC score of <b>{auc_2pct:.2f}</b> in the 0–2% TE region indicates 
-    the amount of decarbonization potential available before TE constraints become 
-    restrictive. Higher values imply greater room to maneuver under tight TE budgets.</p>
+   <p><b>Carbon–weight alignment (structural accessibility)</b><br>
+    This metric measures how strongly benchmark weights are aligned with benchmark
+    carbon contributions. A <b>high alignment</b> indicates that carbon emissions are
+    concentrated in the largest benchmark constituents, which typically requires
+    substantial reweighting and leads to higher tracking error even for small carbon
+    reductions. A <b>low alignment</b> implies that carbon is concentrated in smaller
+    benchmark positions, enabling faster decarbonization at low tracking error.</p>
 
     <p><b>TE required for 50% of maximum decarbonization</b><br>
     The sector requires <b>{te50_raw *10000:.0f} bps</b> of tracking error to 
@@ -537,7 +549,7 @@ else:
             help_text=METRIC_DESCRIPTIONS["avg_bandwidth"]
         )
 
-    with col2:
+    with col1:
         info_metric(
             label="Median ε-bandwidth",
             value=f"{med_bw:.2%}",

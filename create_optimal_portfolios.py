@@ -68,7 +68,7 @@ def run_sector_optimisation(sector_name, sector, R, cov_type="raw", cache_dir="c
     # Validate inputs
     assert np.isclose(w_bench.sum(), 1.0), "Benchmark weights must sum to 1"
     assert not np.isnan(c_vec).any(), "Carbon intensity values cannot be NaN"
-    print(R.iloc[:-3].Date)
+    
     R = R.iloc[:-3]
     # Clean returns data (remove Date column and any rows with NaN)
     R_clean = R.drop(columns=['Date']).dropna()
@@ -204,15 +204,17 @@ def run_sector_optimisation(sector_name, sector, R, cov_type="raw", cache_dir="c
 
     # Package results
     result = {
-        "sector_name": sector_name,
-        "cov_type": cov_type,
-        "diagnostics": diagnostics,
-        "weights_by_te": weights_by_te,           # Optimal weights for each TE level
-        "tracking_errors": tracking_errors,        # Realized TEs (basis points)
-        "carbon_reductions": carbon_reductions,    # Carbon reduction percentages
-        "w_bench": w_bench,                        # Benchmark weights
-        "stock_labels": list(stock_labels)         # Stock identifiers
+    "sector_name": sector_name,
+    "cov_type": cov_type,
+    "diagnostics": diagnostics,
+    "weights_by_te": weights_by_te,
+    "tracking_errors": tracking_errors,
+    "carbon_reductions": carbon_reductions,
+    "w_bench": w_bench,                    # firm-level benchmark weights
+    "carbon_intensity": c_vec,             # firm-level carbon intensity
+    "stock_labels": list(stock_labels)
     }
+
 
     # --- Save to cache ---
     with open(cache_file, "wb") as f:
@@ -271,17 +273,19 @@ def run_period(period_tag):
 
     # --- Combine full results into a dictionary ---
     combined_results = {
-        r["sector_name"]: {
-            "cov_type": r["cov_type"],
-            "diagnostics": r["diagnostics"],
-            "weights_by_te": r["weights_by_te"],
-            "tracking_errors": r["tracking_errors"],
-            "carbon_reductions": r["carbon_reductions"],
-            "w_bench": r.get("w_bench"),
-            "stock_labels": r.get("stock_labels")
-        }
-        for r in results
+    r["sector_name"]: {
+        "cov_type": r["cov_type"],
+        "diagnostics": r["diagnostics"],
+        "weights_by_te": r["weights_by_te"],
+        "tracking_errors": r["tracking_errors"],
+        "carbon_reductions": r["carbon_reductions"],
+        "w_bench": r.get("w_bench"),
+        "carbon_intensity": r.get("carbon_intensity"),
+        "stock_labels": r.get("stock_labels")
     }
+    for r in results
+}
+
 
     # --- Save results to pickle file ---
     out_path = f"results/optimal_portfolios/optimal_portfolios_all_te_{period_tag}.pkl"
