@@ -50,7 +50,7 @@ from plot_functions import plot_sector_evolution
 TARGET_TE_BPS = 200
 
 # Tracking error mode: "annualized" or "daily"
-TE_MODE = "daily" # "annualized" or "daily"
+TE_MODE = "annualized"  # "annualized" or "daily"
 
 # Trading days per year for annualization
 TRADING_DAYS_PER_YEAR = 252
@@ -64,14 +64,7 @@ PERIODS = ["0321", "0621", "0921", "1221", "0322", "0622", "0922", "1222",
 # CORE FUNCTIONS
 # =============================================================================
 
-def load_data():
-    print("Loading benchmark data...")
-
-    benchmark_sectors_daily_returns = pd.read_excel(
-        "data/benchmark_returns_volatility/sector_portfolio_returns_all_periods.xlsx",
-        dtype={'period': str},
-        index_col=0
-    )
+def load_volatility():
 
     sector_annualized_volatility_by_quarter = pd.read_excel(
         "data/benchmark_returns_volatility/sector_annualized_volatility_by_quarter.xlsx",
@@ -85,12 +78,10 @@ def load_data():
     )
 
     print("Loaded benchmark data")
-    print(f"   - Daily returns shape: {benchmark_sectors_daily_returns.shape}")
     print(f"   - Annualized volatility records: {len(sector_annualized_volatility_by_quarter)}")
     print(f"   - Daily volatility records: {len(sector_daily_volatility_by_quarter)}")
 
     return (
-        benchmark_sectors_daily_returns,
         sector_annualized_volatility_by_quarter,
         sector_daily_volatility_by_quarter
     )
@@ -124,8 +115,7 @@ def compute_tracking_error(r_b, r_d, mode="annualized"):
         return te_daily
 
     elif mode == "annualized":
-        print(te_daily * np.sqrt(TRADING_DAYS_PER_YEAR))
-        print(te_daily * np.sqrt(TRADING_DAYS_PER_YEAR) *np.sqrt(12 ))
+
         return te_daily * np.sqrt(TRADING_DAYS_PER_YEAR)
 
     else:
@@ -133,7 +123,7 @@ def compute_tracking_error(r_b, r_d, mode="annualized"):
 
 
 
-def process_sector(sector, period, benchmark_return_index_period, optimal_portfolios_all_te):
+def process_sector(sector, period, optimal_portfolios_all_te):
     """
     Process a single sector to compute tracking error.
 
@@ -154,7 +144,7 @@ def process_sector(sector, period, benchmark_return_index_period, optimal_portfo
         Annualized tracking error for the sector
     """
     # Get benchmark returns for this sector
-    r_b = benchmark_return_index_period[sector]
+   
 
     # Load daily returns for this sector
     daily_returns_3m_period = pd.read_excel(
@@ -169,21 +159,39 @@ def process_sector(sector, period, benchmark_return_index_period, optimal_portfo
         target_te_bps=TARGET_TE_BPS
     )[sector]
 
-    # Get portfolio weights
+    # Get portfolio weights of the optimised portfolios 
     w_opt = optimal_portfolios_shrink_2_TE["w_opt"].astype(float).ravel()
     stock_labels = list(optimal_portfolios_shrink_2_TE["stock_labels"])
-    weights_df = pd.DataFrame([w_opt], columns=stock_labels)
+    opt_weights_df = pd.DataFrame([w_opt], columns=stock_labels)
 
     # Align columns between daily returns and weights
-    common_columns = daily_returns_3m_period.columns.intersection(weights_df.columns)
+    common_columns = daily_returns_3m_period.columns.intersection(opt_weights_df.columns)
 
     # Validate alignment
     if len(common_columns) != len(stock_labels):
         print(f"      Warning: Column mismatch for {sector}")
         print(f"      Expected {len(stock_labels)}, got {len(common_columns)} common columns")
 
+
     # Calculate portfolio daily returns
-    r_d = (daily_returns_3m_period[common_columns] * weights_df[common_columns].values).sum(axis=1)
+    r_d = (daily_returns_3m_period[common_columns] * opt_weights_df[common_columns].values).sum(axis=1)
+
+        # Get portfolio weights of the optimised portfolios 
+    w_bench = optimal_portfolios_shrink_2_TE["w_bench"].astype(float).ravel()
+    stock_labels = list(optimal_portfolios_shrink_2_TE["stock_labels"])
+    bench_weights_df = pd.DataFrame([w_bench], columns=stock_labels)
+
+    # Align columns between daily returns and weights
+    common_columns = daily_returns_3m_period.columns.intersection(bench_weights_df.columns)
+    
+    # Validate alignment
+    if len(common_columns) != len(stock_labels):
+        print(f"      Warning: Column mismatch for {sector}")
+        print(f"      Expected {len(stock_labels)}, got {len(common_columns)} common columns")
+
+    
+    # Calculate portfolio daily returns
+    r_b = (daily_returns_3m_period[common_columns] * bench_weights_df[common_columns].values).sum(axis=1)
 
     # Align time indices
     common_idx = r_b.index.intersection(r_d.index)
@@ -200,7 +208,7 @@ def process_sector(sector, period, benchmark_return_index_period, optimal_portfo
     return te_ann
 
 
-def process_period(period, benchmark_sectors_daily_returns,
+def process_period(period,
                    sector_annualized_volatility_by_quarter,
                    sector_daily_volatility_by_quarter):
     """
@@ -210,8 +218,7 @@ def process_period(period, benchmark_sectors_daily_returns,
     ----------
     period : str
         Period code (e.g., '0321')
-    benchmark_sectors_daily_returns : pd.DataFrame
-        Benchmark returns for all periods
+
     sector_annualized_volatility_by_quarter : pd.DataFrame
         Sector volatility by quarter
 
@@ -235,24 +242,15 @@ def process_period(period, benchmark_sectors_daily_returns,
     with open(optim_file, "rb") as f:
         optimal_portfolios_all_te = pickle.load(f)
 
-    # Filter benchmark returns for this period
-    benchmark_return_index_period = benchmark_sectors_daily_returns.loc[
-        benchmark_sectors_daily_returns['period'] == period
-    ].drop(columns='period')
-
-    if benchmark_return_index_period.empty:
-        print(f"      WARNING: No benchmark returns found for period {period}")
-        print(f"      Skipping period {period}\n")
-        return None
 
     # Compute tracking error for each sector
     sector_te = {}
-    sectors = benchmark_return_index_period.columns
+    sectors = optimal_portfolios_all_te.keys()
     print(f"      Processing {len(sectors)} sectors...")
 
     for sector in sectors:
         try:
-            te_ann = process_sector(sector, period, benchmark_return_index_period, optimal_portfolios_all_te)
+            te_ann = process_sector(sector, period, optimal_portfolios_all_te)
             sector_te[sector] = te_ann
         except Exception as e:
             print(f"      Error processing {sector}: {str(e)}")
@@ -293,24 +291,24 @@ def process_period(period, benchmark_sectors_daily_returns,
         VOL_COL = "daily_volatility"
         merged = te_df.merge(sector_daily_volatility_period, on="sector", how="inner")
     
+
     # ---- Soft volatility adjustment ----
     alpha = 0.5   # Softening exponent
 
-    # or "annualized_volatility"
+    # Step 1: robustness ratio
     merged["Robustness_Ratio"] = merged[colname] / (merged[VOL_COL] ** alpha)
 
+    # Step 2: within-period min–max normalization (invert so higher = more robust)
+    min_ratio = merged["Robustness_Ratio"].min()
+    max_ratio = merged["Robustness_Ratio"].max()
 
-    # ---- Within-period min-max normalization (1 = most robust) ----
-    ratio_max = merged["Robustness_Ratio"].max()
-    ratio_min = merged["Robustness_Ratio"].min()
-
-    merged["Robustness_Score"] = (ratio_max - merged["Robustness_Ratio"]) / (
-        ratio_max - ratio_min
-    )
+    merged["Robustness_Score"] = (
+        max_ratio - merged["Robustness_Ratio"]
+    ) / (max_ratio - min_ratio)
 
     print(f"      Computed robustness scores for {len(merged)} sectors")
 
-    return merged[['sector', 'period', colname, VOL_COL, 'Robustness_Ratio', 'Robustness_Score']]
+    return merged[['sector', 'period', colname, VOL_COL, 'Robustness_Score']]
 
 
 def validate_robustness_scores(robust_df):
@@ -393,17 +391,8 @@ def plot_robustness_metrics(robust_df_plot):
         figsize=(12, 7)
     )
 
-    # Plot 3: Unnormalized Robustness Score
-    print("Plotting Robustness Score Ratio...")
-    plot_sector_evolution(
-        df=robust_df_plot,
-        value_col='Robustness_Ratio',
-        title='Robustness Ratio Evolution by Sector (2021-2023)',
-        ylabel='Robustness Ratio Score (Higher = More Robust)',
-        figsize=(12, 7)
-    )
 
-    # Plot 4: Normalized Robustness Score
+    # Plot 4: Robustness Score (from Robustness Ratio)
     print("Plotting Robustness Score...")
     plot_sector_evolution(
         df=robust_df_plot,
@@ -412,6 +401,7 @@ def plot_robustness_metrics(robust_df_plot):
         ylabel='Robustness Score (Higher = More Robust)',
         figsize=(12, 7)
     )
+
 
     print("All plots generated successfully")
 
@@ -434,8 +424,8 @@ def main():
     # Create output directory
     os.makedirs("results/robustness", exist_ok=True)
 
-    # Load benchmark data
-    (benchmark_sectors_daily_returns, sector_annualized_volatility_by_quarter, sector_daily_volatility_by_quarter) = load_data()
+    # Load volatility data
+    sector_annualized_volatility_by_quarter, sector_daily_volatility_by_quarter = load_volatility()
 
 
     # Process all periods
@@ -444,7 +434,6 @@ def main():
     for period in PERIODS:
         result = process_period(
         period,
-        benchmark_sectors_daily_returns,
         sector_annualized_volatility_by_quarter,
         sector_daily_volatility_by_quarter
     )
