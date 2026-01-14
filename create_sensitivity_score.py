@@ -152,39 +152,48 @@ def bootstrap_returns(R_clean_np, n_trials):
     T = R_clean_np.shape[0]
     return [R_clean_np[np.random.choice(T, T, replace=True)] for _ in range(n_trials)]
 
-def compute_perturbed_weights(
-    R_clean,
-    w_bench,
-    c_vec,
+def compute_bootstrap_weights(
+    R_clean: pd.DataFrame,
+    w_bench: np.ndarray,
+    c_vec: np.ndarray,
     Sigma_fn,
-    te_cap=0.03,
-    n_trials=100,
-    noise_std=0.01,
-    noise_type="multiplicative",
-    alpha=0.2
+    te_cap: float = 0.02,
+    n_trials: int = 200,
+    seed_base: int = 0
 ):
+    """
+    Bootstrap sensitivity:
+    Each trial draws T months with replacement from the T-month estimation window,
+    re-estimates Sigma using Sigma_fn (e.g., LedoitWolf shrinkage),
+    and resolves the carbon-minimization problem under the TE cap.
+
+    Returns
+    -------
+    weights : np.ndarray, shape (n_trials, N)
+    tracking_errors : np.ndarray, shape (n_trials,)
+        realized annualized TE (decimal, e.g., 0.02)
+    """
     N = R_clean.shape[1]
+    T = R_clean.shape[0]
     te_cap_var_monthly = (te_cap / np.sqrt(12)) ** 2
+
     weights = []
     tracking_errors = []
 
-    for seed in range(n_trials):
-        np.random.seed(seed)
+    R_np = R_clean.to_numpy()
+    cols = R_clean.columns
 
-        if noise_type == "multiplicative":
-            noise = np.random.normal(0, noise_std, R_clean.shape)
-            R_perturbed = R_clean + R_clean.multiply(noise)
+    for k in range(n_trials):
+        rng = np.random.default_rng(seed_base + k)
 
-        elif noise_type == "additive":
-            sigma = R_clean.std(axis=0).values.reshape(1, -1)
-            noise = np.random.normal(0, 1, R_clean.shape)
-            R_perturbed = R_clean + alpha * noise * sigma
+        # Bootstrap resample of months (rows)
+        idx = rng.integers(low=0, high=T, size=T)
+        R_boot = pd.DataFrame(R_np[idx, :], columns=cols)
 
-        else:
-            raise ValueError("noise_type must be 'multiplicative' or 'additive'")
+        # Re-estimate Sigma with shrinkage
+        Sigma = Sigma_fn(R_boot)
 
-        Sigma = Sigma_fn(R_perturbed)
-
+        # Solve the optimization under TE cap
         w = cp.Variable(N)
         tracking_error = cp.quad_form(w - w_bench, cp.psd_wrap(Sigma))
         constraints = [tracking_error <= te_cap_var_monthly, cp.sum(w) == 1, w >= 0]
@@ -193,9 +202,11 @@ def compute_perturbed_weights(
         solve_qp_with_fallback(prob)
 
         if w.value is not None and prob.status in ("optimal", "optimal_inaccurate"):
-            weights.append(w.value)
-            diff = w.value - w_bench
-            te_real = np.sqrt(diff.T @ Sigma @ diff) * np.sqrt(12)
+            w_val = np.asarray(w.value).ravel()
+            weights.append(w_val)
+
+            diff = w_val - w_bench
+            te_real = np.sqrt(diff.T @ Sigma @ diff) * np.sqrt(12.0)  # annualized
             tracking_errors.append(te_real)
         else:
             weights.append(np.full(N, np.nan))
@@ -227,7 +238,7 @@ for period_tag in periods:
     data_file = f"data/datasets/benchmark_weights_carbon_intensity_{period_tag}.xlsx"
     returns_file = f"Data/log_returns/sector_log_returns_comp_{period_tag}.xlsx"
     optim_file = f"results/optimal_portfolios/optimal_portfolios_all_te_{period_tag}.pkl"
-    out_dir = f"results/sensitivity"
+    out_dir = f"results/sensitivity_2/"
     out_pickle = f"{out_dir}/sensitivity_kpis_{period_tag}.pkl"
     out_excel = f"{out_dir}/sensitivity_kpis_{period_tag}.xlsx"
 
@@ -279,17 +290,15 @@ for period_tag in periods:
         # Baseline optimized weights (already precomputed)
         w_opt0 = optimal_portfolios_shrink_2_TE[sector_name]["w_opt"]
 
-        # === Perturbations ===
-        w_trials, te_trials = compute_perturbed_weights(
-            R_clean,
-            w_bench,
-            c_vec,
-            sigma_reg_fn,
-            te_cap=0.02,  # annual TE cap
-            n_trials=n_trials,
-            noise_std=0.2,
-            noise_type="additive",
-        )
+        w_trials, te_trials = compute_bootstrap_weights(
+        R_clean=R_clean,
+        w_bench=w_bench,
+        c_vec=c_vec,
+        Sigma_fn=sigma_reg_fn,   # Ledoit–Wolf shrinkage + ridge (your function)
+        te_cap=0.02,
+        n_trials=n_trials,
+        seed_base=0
+    )
 
         # === Compute KPIs ===
         kpis = sensitivity_kpis_from_trials(
@@ -347,10 +356,10 @@ df["Sensitivity_Score_raw"] =1/3 * (
     df["Turnover_norm"] +  df["Cosine_norm"] +  df["CarbonLoss_norm"])
 
 df["Sensitivity_Score"] = 1 - df["Sensitivity_Score_raw"]
-df["Sensitivity_Score"] = minmax_norm_grouped(df, 'Sensitivity_Score')
 
 # --- save and plot ---
 df.to_excel("results/sensitivity/sensitivity_scores_by_period.xlsx", index=False)
+df.to_parquet("results/sensitivity/sensitivity_scores_by_period.parquet", index=False)
 print("✅ Saved sensitivity scores to results/sensitivity/sensitivity_scores_by_period.xlsx")
 
 # --- plot sensitivity score evolution ---

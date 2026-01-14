@@ -5,13 +5,22 @@ from app_individual_view_functions import (
     plot_frontier_percent,
     plot_marginal_gains,
     render_dimension_metrics,
-    render_individual_radar
+    render_individual_radar,
+    render_risk_return_profiles,
+    label_with_info,
+    render_composition_section
 )
 
 from app_aggregate_view_functions import (
     plot_aggregate_frontier_absolute,
     plot_aggregate_frontier_percent,
-    plot_aggregate_radars_sorted
+    plot_aggregate_radars_sorted,
+    render_aggregate_risk_return_distributions,
+    render_room_for_maneuver_bars,
+    render_flexibility_bars,
+    render_sensitivity_bars,
+    render_robustness_bars,
+    render_aggregate_composition_tables
 )
 
 
@@ -59,20 +68,14 @@ with st.sidebar:
     st.markdown("### View mode")
 
     st.markdown(
-        """
-        <div class="view-toggle-row">
-            <span class="toggle-text">Individual/Aggregate: </span>
-        """,
-        unsafe_allow_html=True
-    )
-
-    view_toggle = st.toggle(
-        "",
-        value=False,
-        key="view_toggle"
-    )
-
-
+    """
+    <div class="view-toggle-row">
+        <span class="toggle-text">Individual/Aggregate:</span>
+    """,
+    unsafe_allow_html=True
+)
+    view_toggle = st.toggle("", value=False, key="view_toggle")
+    
 
 # Map toggle → view mode
 view_mode = "Aggregate" if view_toggle else "Individual"
@@ -101,17 +104,30 @@ if view_mode == "Individual":
         st.markdown("### Settings")
 
         sector_name = st.selectbox(
-            "Select sector:",
+            "Select GICS sector:",
             sectors,
             index=0,
             key="sector_selector"
         )
 
+        analysis_period_tooltip = (
+    "Each analysis period represents a quarter-end snapshot of the S&P 500. "
+    "Portfolio optimization uses only information available at that date,"
+    " including sector benchmark weights and firm-level carbon intensities."
+    " Tracking-error risk is measured using a return covariance matrix estimated from the previous two "
+    "years of monthly data and enters directly into the tracking-error constraint."
+)       
+
+        label_with_info("Select analysis period", analysis_period_tooltip)
+
+
+
         selected_display = st.radio(
-            "Select analysis period:",
+            "",
             options=available_periods_display,
             horizontal=True,
-            index=len(available_periods_display) - 1
+            index=len(available_periods_display) - 1,
+            label_visibility="collapsed"
         )
 
         st.markdown('</div>', unsafe_allow_html=True)
@@ -121,6 +137,7 @@ if view_mode == "Individual":
         available_periods_display.index(selected_display)
     ]
 
+    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
 
@@ -132,6 +149,8 @@ if view_mode == "Individual":
     
     render_dimension_metrics(sector_name, selected_period_raw)
     render_individual_radar(sector_name, sectors)
+    render_risk_return_profiles(sector_name, selected_period_raw)
+    render_composition_section(sector_name, selected_period_raw, target_te_bps=200)
 
 
 # =====================================================
@@ -151,11 +170,20 @@ elif view_mode == "Aggregate":
         st.markdown("### Settings (Only for Te-Carbon Frontiers)")
 
     
+        label_with_info(
+    "Select analysis period",
+    (
+        "Each analysis period represents a quarter-end snapshot of the S&P 500. "
+        
+    )
+)       
+
         selected_display = st.radio(
-            "Select analysis period:",
+            "",
             options=available_periods_display,
             horizontal=True,
-            index=len(available_periods_display) - 1
+            index=len(available_periods_display) - 1,
+            label_visibility='collapsed'
         )
 
         st.markdown('</div>', unsafe_allow_html=True)
@@ -163,7 +191,10 @@ elif view_mode == "Aggregate":
         selected_period_raw = available_periods_raw[
             available_periods_display.index(selected_display)
         ]
-    st.markdown("## TE–Carbon Frontiers Across Sectors (Absolute Carbon Intensity)")
+
+
+
+    st.markdown("## TE–Carbon Frontiers Across Sectors")
     col_left, col_right = st.columns(2)
 
     with col_left:
@@ -173,4 +204,10 @@ elif view_mode == "Aggregate":
         plot_aggregate_frontier_absolute(selected_period_raw)
 
     plot_aggregate_radars_sorted()
-
+    render_aggregate_risk_return_distributions()
+    st.markdown("## Dimension Breakdown")
+    render_room_for_maneuver_bars()
+    render_flexibility_bars()
+    render_sensitivity_bars()
+    render_robustness_bars()
+    render_aggregate_composition_tables()

@@ -6,7 +6,6 @@ and time periods. Flexibility is measured through:
 1. Epsilon-bands (weight variation ranges)
 2. L2 lower bounds (portfolio distance measures)
 
-Author: IRP17 Team
 """
 
 import os
@@ -301,25 +300,8 @@ def validate_data_quality(data, log_returns_all, optimal_portfolios, period_code
     print(f"✅ Data quality checks complete\n")
     return True
 
-
 def build_flexibility_score(df):
-    """
-    Build flexibility scores from raw metrics.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        DataFrame with L2 and bandwidth metrics
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with added flexibility scores
-    """
     df = df.copy()
-
-    # Unnormalized absolute metrics
-    df["Flexibility_Score_abs"] = 0.5 * df["L2_lower_bound_same_obj"] + 0.5 * df["Avg_bandwidth"]
 
     # Normalized version (0-1 scaling within period)
     def norm(x):
@@ -330,10 +312,11 @@ def build_flexibility_score(df):
         return (x - x_min) / (x_max - x_min)
 
     df["n_L2"] = norm(df["L2_lower_bound_same_obj"])
-    df["n_AvgBW"] = norm(df["Avg_bandwidth"])
-    df["Flexibility_Score"] = 0.5 * df["n_L2"] + 0.5 * df["n_AvgBW"]
+    df["n_MedBW"] = norm(df["Median_bandwidth"])
+    df["Flexibility_Score"] = 0.5 * df["n_L2"] + 0.5 * df["n_MedBW"]
 
     return df
+
 
 
 def process_period(period_code, period_label):
@@ -417,9 +400,10 @@ def process_period(period_code, period_label):
         sector_bands = {s: b for s, b, _ in results}
         summary_rows = [r for _, _, r in results]
         sector_flexibility = pd.DataFrame(summary_rows).sort_values(
-            ["L2_lower_bound_same_obj", "Avg_bandwidth"],
-            ascending=[False, False]
-        )
+        ["L2_lower_bound_same_obj", "Median_bandwidth"],
+        ascending=[False, False]
+    )
+
 
         # Save cache
         os.makedirs("results/flexibility", exist_ok=True)
@@ -556,8 +540,8 @@ def main():
     )
     flexibility_panel = flexibility_panel.sort_values(["Sector", "Period"])
 
-    # Save panel
-    flexibility_panel.to_excel("results/flexibility/sector_flexibility_raw.xlsx", index=False)
+    flexibility_panel[["Sector", "Period", 'Median_bandwidth', 'L2_lower_bound_same_obj']].to_excel("results/flexibility/sector_flexibility_raw.xlsx", index=False)
+    flexibility_panel[["Sector", "Period", 'Median_bandwidth', 'L2_lower_bound_same_obj']].to_parquet("results/flexibility/sector_flexibility_raw.parquet", index=False)
     print("\n✅ Saved all-period flexibility panel.")
 
     # Compute flexibility scores
@@ -577,12 +561,10 @@ def main():
     # Final validation
     validate_final_results(flexibility_score_df, PERIODS)
 
-    # Save flexibility scores
+    # Save flexibility scores (already normalized within period in build_flexibility_score)
     flexibility_score_output = "results/flexibility/flexibility_scores_by_period.xlsx"
-    flexibility_score_df['Flexibility_Score'] = minmax_norm_grouped(flexibility_score_df, "Flexibility_Score")
     flexibility_score_df.to_excel(flexibility_score_output, index=False)
     print(f"\n✅ Flexibility scores saved to: {flexibility_score_output}")
-
     # Plot results
     print("\n" + "="*80)
     print("GENERATING PLOTS")
@@ -599,14 +581,7 @@ def main():
         ylabel="Flexibility Score (0–1)"
     )
 
-    # Plot unnormalized flexibility
-    print("📈 Plotting unnormalized flexibility score...")
-    plot_sector_evolution(
-        scored_panel,
-        value_col="Flexibility_Score_abs",
-        title="Unnormalized Flexibility Score by Sector",
-        ylabel="Flexibility Score (Absolute Scale)"
-    )
+
 
     print("\n" + "="*80)
     print("✅ FLEXIBILITY SCORE COMPUTATION COMPLETE")

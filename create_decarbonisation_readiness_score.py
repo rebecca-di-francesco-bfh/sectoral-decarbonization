@@ -112,6 +112,7 @@ final_df["DRI"] = (
 # 6. SAVE RESULTS
 # =============================================================================
 final_df.to_excel("results/DRI/decarbonization_readiness_index.xlsx", index=False)
+final_df.to_parquet("results/DRI/decarbonization_readiness_index.parquet", index=False)
 print("✅ Saved DRI results to results/DRI/decarbonization_readiness_index.xlsx")
 
 print("\n🏆 Top 5 sectors by DRI:")

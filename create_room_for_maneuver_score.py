@@ -23,6 +23,14 @@ import matplotlib.pyplot as plt
 from plot_functions import plot_sector_evolution
 from scipy.stats import spearmanr
 
+def minmax_within_period(x):
+    x = pd.to_numeric(x, errors="coerce")
+    lo, hi = np.nanmin(x), np.nanmax(x)
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi == lo:
+        # if all equal or all NaN, return 0.5 for neutrality
+        return pd.Series(0.5, index=x.index)
+    return (x - lo) / (hi - lo)
+
 def _carbon_weight_alignment(w_bench, carbon_intensity):
     """
     Measures alignment between benchmark weights and benchmark carbon contributions.
@@ -253,7 +261,8 @@ for period in periods:
         te, c = _prep_frontier(te_bps, c_pct)
 
         # Ensure TE is in decimal form (0.02, 0.05, etc.)
-        te_frac = te / 10000 if np.nanmax(te) > 1 else te
+        te_frac = te
+        print(te_frac)
 
         # Normalize carbon reduction to [0, 1] range for some metrics
         c_max = np.nanmax(c)
@@ -307,17 +316,17 @@ print("\nComputing Room for Maneuver Score...")
 
 df_norm = df.copy()
 
-df_norm['C_at_1pct_norm'] = _minmax(df_norm['C_at_1pct'])
-df_norm['TE_for_50pctCut_norm'] = 1 - _minmax(df_norm['TE_for_50pctCut'])
-df_norm['Alignment_norm'] = 1 - _minmax(df_norm['Alignment'])
+# Invert "bad-is-high" metrics *before* normalization (cleaner interpretation)
+df_norm["TE_for_50pctCut_inv"] = -df_norm["TE_for_50pctCut"]   # lower TE50 is better
+df_norm["Alignment_inv"]       = -df_norm["Alignment"]         # lower alignment is better
 
-df_norm['Room_for_Maneuver_Score'] = (
-      1/3 * df_norm['C_at_1pct_norm'] +
-      1/3 * df_norm['TE_for_50pctCut_norm'] +
-      1/3 * df_norm['Alignment_norm']
-)
+# Normalize each metric within each period
+df_norm["C_at_1pct_norm"] = df_norm.groupby("Period")["C_at_1pct"].transform(minmax_within_period)
+df_norm["TE50_norm"]      = df_norm.groupby("Period")["TE_for_50pctCut_inv"].transform(minmax_within_period)
+df_norm["Align_norm"]     = df_norm.groupby("Period")["Alignment_inv"].transform(minmax_within_period)
 
-
+# Average (already in [0,1], so no second normalization needed)
+df_norm["Room_for_Maneuver_Score"] = (df_norm["C_at_1pct_norm"] + df_norm["TE50_norm"] + df_norm["Align_norm"]) / 3
 
 # =============================================================================
 # STEP 5: PLOT ROOM FOR MANEUVER SCORE EVOLUTION
@@ -330,7 +339,6 @@ print("\nGenerating plots...")
 
 print("\n✓ Script completed successfully")
 # # Save the normalized dataframe with scores
-output_file_scores = "results/room_for_maneuver/room_for_maneuver_scores_by_period.xlsx"
 
 
 # Sort by period
@@ -355,19 +363,9 @@ df_norm["Period"] = pd.Categorical(
 )
 df_norm = df_norm.sort_values(["Sector", "Period"])
 
-def normalize_within_period(df_norm):
-    df_norm['Room_for_Maneuver_Score'] = norm(df_norm['Room_for_Maneuver_Score'])
-    return df_norm
-
-scored_panel = (
-        df_norm
-        .groupby("Period", group_keys=False, observed=True)
-        .apply(normalize_within_period)
-        .reset_index(drop=True)
-    )
 # Plot metric 1: 
 plot_sector_evolution(
-    scored_panel,
+    df_norm,
     value_col='C_at_1pct',
     title="Carbon reduction at 1% TE",
     ylabel="Carbon reduction at 1% TE"
@@ -375,14 +373,14 @@ plot_sector_evolution(
 
 
 plot_sector_evolution(
-    scored_panel,
+    df_norm,
     value_col='Alignment',
     title="Carbon–Weight Alignment (Structural Accessibility)",
     ylabel="Spearman corr(weight, carbon contribution)"
 )
 
 plot_sector_evolution(
-    scored_panel,
+    df_norm,
     value_col='TE_for_50pctCut',
     title="TE required for 50% of maximum decarbonizationr",
     ylabel="TE required for 50% of maximum decarbonization"
@@ -391,15 +389,28 @@ plot_sector_evolution(
 
 # Plot room for maneuver score
 plot_sector_evolution(
-    scored_panel,
+    df_norm,
     value_col='Room_for_Maneuver_Score',
     title="Room for Maneuver Score",
     ylabel="Room_for_Maneuver_Score"
 )
 
 
-scored_panel[['Sector', 'Period',
-              'Room_for_Maneuver_Score',
-              'C_at_1pct',
-              'Alignment',
-              'TE_for_50pctCut']].to_excel(output_file_scores, index=False)
+out_cols = [
+    "Sector", "Period",
+    "Room_for_Maneuver_Score",
+    "C_at_1pct",
+    "Alignment",
+    "TE_for_50pctCut",
+]
+
+out_xlsx = "results/room_for_maneuver/room_for_maneuver_scores_by_period.xlsx"
+out_parq = "results/room_for_maneuver/room_for_maneuver_scores_by_period.parquet"
+
+out_df = df_norm[out_cols].copy()
+
+out_df.to_excel(out_xlsx, index=False)
+out_df.to_parquet(out_parq, index=False)   # ✅ add this line
+
+print(f"✅ Saved: {out_xlsx}")
+print(f"✅ Saved: {out_parq}")

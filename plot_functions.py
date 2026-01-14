@@ -6,6 +6,8 @@ import pandas as pd
 import math
 
 
+import matplotlib.pyplot as plt
+
 def plot_sector_evolution(
     df,
     value_col,
@@ -13,60 +15,36 @@ def plot_sector_evolution(
     ylabel,
     vol_df=None,
     adjust_by_vol=False,
-    figsize=(10, 6)
+    figsize=(10, 6),
+    show=True,            # <- optional
+    savepath=None,        # <- optional convenience
+    dpi=300               # <- optional
 ):
-    """
-    Plot the evolution of a metric over time for all sectors.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Must contain 'Sector' and 'Period' columns, plus the value_col
-    value_col : str
-        Column name of the metric to plot
-    title : str
-        Plot title
-    ylabel : str
-        Y-axis label
-    vol_df : pd.DataFrame, optional
-        DataFrame with 'Sector' and 'Sector Volatility' columns.
-        Used if adjust_by_vol=True
-    adjust_by_vol : bool, default False
-        Whether to divide the metric by sector volatility
-    figsize : tuple, default (10, 6)
-        Figure size
-    """
-
     df_plot = df.copy()
 
-    # Optionally adjust by volatility
     if adjust_by_vol and vol_df is not None:
         df_plot = df_plot.merge(vol_df, on="Sector", how="left")
         adjusted_col = f"{value_col}_per_Vol"
         df_plot[adjusted_col] = df_plot[value_col] / df_plot["Sector Volatility"]
         value_col = adjusted_col
 
-    # Sort periods chronologically
     period_order = sorted(df_plot["Period"].unique())
     df_plot["Period"] = pd.Categorical(df_plot["Period"], categories=period_order, ordered=True)
 
     sector_colors = {
-    'Communication Services': '#E63946',      # Red
-    'Consumer Discretionary': '#F77F00',      # Orange
-    'Consumer Staples': '#FCBF49',            # Yellow
-    'Energy': '#06FFA5',                      # Mint Green
-    'Financials': '#118AB2',                  # Blue
-    'Health Care': '#073B4C',                 # Dark Blue
-    'Industrials': '#8B5A3C',                 # Brown
-    'Information Technology': '#9D4EDD',      # Purple
-    'Materials': '#FF69B4',                   # Pink
-    'Real Estate': '#BC4749',                 # Burgundy
-    'Utilities': '#808080'                    # Gray
-}
+        'Communication Services': '#E63946',
+        'Consumer Discretionary': '#F77F00',
+        'Consumer Staples': '#FCBF49',
+        'Energy': '#06FFA5',
+        'Financials': '#118AB2',
+        'Health Care': '#073B4C',
+        'Industrials': '#8B5A3C',
+        'Information Technology': '#9D4EDD',
+        'Materials': '#FF69B4',
+        'Real Estate': '#BC4749',
+        'Utilities': '#808080'
+    }
 
-
-
-    # Create plot
     fig, ax = plt.subplots(figsize=figsize)
 
     for sector, grp in df_plot.groupby("Sector"):
@@ -79,8 +57,7 @@ def plot_sector_evolution(
             alpha=0.85,
             linewidth=2
         )
-
-    # Styling
+    
     ax.set_title(title, fontsize=13, fontweight="bold")
     ax.set_xlabel("Period (Quarter)", fontsize=11)
     ax.set_ylabel(ylabel, fontsize=11)
@@ -94,8 +71,18 @@ def plot_sector_evolution(
         frameon=False
     )
 
-    plt.tight_layout()
-    plt.show()
+    fig.tight_layout()
+
+    # Save if requested
+    if savepath is not None:
+        fig.savefig(savepath, format="pdf", bbox_inches="tight")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)  # avoids GUI popup / memory buildup
+
+    return fig
 
 
 def plot_te_carbon_by_sector(

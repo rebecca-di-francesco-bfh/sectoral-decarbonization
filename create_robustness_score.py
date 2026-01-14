@@ -2,37 +2,43 @@
 Robustness Score Computation for Sector-Level Optimal Portfolios
 ----------------------------------------------------------------
 
-This module evaluates the robustness of decarbonized portfolios by combining
-realized tracking error with the volatility of the corresponding sector benchmark.
+This module implements the robustness dimension of the Decarbonization Readiness
+Index. Robustness measures how stable the realized tracking error of decarbonized
+portfolios remains when evaluated out of sample, relative to the underlying risk
+of the sector benchmark.
 
-For each sector and estimation period, the procedure:
-    1. Extracts the optimal decarbonized portfolio at a fixed target tracking-error level.
-    2. Computes out-of-sample (next-period) tracking error using daily returns.
-    3. Merges tracking error with the sector’s annualized benchmark volatility.
-    4. Constructs robustness indicators.
+For each sector and period, the procedure:
+    1. Extracts the optimized decarbonized portfolio at a fixed ex-ante tracking
+       error target (2% annualized).
+    2. Computes daily portfolio and benchmark returns over the subsequent
+       three-month out-of-sample window.
+    3. Computes the realized annualized tracking error of the decarbonized
+       portfolio relative to the benchmark.
+    4. Scales the realized tracking error by the sector’s realized benchmark
+       volatility to account for structural differences in sector risk.
+    5. Constructs a robustness score by applying an inverted within-period
+       min–max normalization across sectors.
 
 Definitions
 -----------
-Let TE denote the annualized tracking error of the optimized portfolio relative
-to the sector benchmark, and let σ be the annualized sector volatility.
+Let TE_{s,t} denote the realized annualized tracking error of the decarbonized
+portfolio for sector s in period t, computed from daily out-of-sample returns.
+Let σ_{s,t} denote the realized annualized volatility of the corresponding sector
+benchmark over the same window.
 
-A robustness ratio is defined as:
-    Robustness_Ratio = TE / σ^α
+The raw robustness metric is defined as the volatility-adjusted tracking error:
+    m^{rob}_{s,t} = TE_{s,t} / σ_{s,t}.
 
-where α ∈ (0,1] is a softening parameter (default: α = 0.5) that adjusts the
-relative weight placed on sector volatility.
+Within each period, this ratio is min–max normalized across sectors and inverted
+so that higher values correspond to greater robustness. A sector is therefore
+considered more robust when its decarbonized portfolio maintains low realized
+tracking error relative to its benchmark volatility, compared to other sectors
+in the same evaluation period.
 
-Within each period, robustness ratios are transformed into normalized scores:
-    Robustness_Score = (max_ratio − ratio) / (max_ratio − min_ratio)
-
-so that:
-    - Robustness_Score = 1 indicates the most robust (lowest TE relative to volatility),
-    - Robustness_Score = 0 indicates the least robust.
-
-The output consists of tracking errors, volatility measures, robustness ratios,
-and normalized robustness scores for each sector and period.
+The output consists of realized tracking errors, benchmark volatilities,
+volatility-adjusted robustness ratios, and normalized robustness scores for each
+sector and period.
 """
-
 
 import os
 import pickle
@@ -63,29 +69,6 @@ PERIODS = ["0321", "0621", "0921", "1221", "0322", "0622", "0922", "1222",
 # =============================================================================
 # CORE FUNCTIONS
 # =============================================================================
-
-def load_volatility():
-
-    sector_annualized_volatility_by_quarter = pd.read_excel(
-        "data/benchmark_returns_volatility/sector_annualized_volatility_by_quarter.xlsx",
-        dtype={'period': str}
-    )
-
-    # NEW: load daily (non-annualised) volatility
-    sector_daily_volatility_by_quarter = pd.read_excel(
-        "data/benchmark_returns_volatility/sector_daily_volatility_by_quarter.xlsx",
-        dtype={'period': str}
-    )
-
-    print("Loaded benchmark data")
-    print(f"   - Annualized volatility records: {len(sector_annualized_volatility_by_quarter)}")
-    print(f"   - Daily volatility records: {len(sector_daily_volatility_by_quarter)}")
-
-    return (
-        sector_annualized_volatility_by_quarter,
-        sector_daily_volatility_by_quarter
-    )
-
 
 def compute_tracking_error(r_b, r_d, mode="annualized"):
     """
@@ -205,12 +188,10 @@ def process_sector(sector, period, optimal_portfolios_all_te):
     # Compute tracking error
     te_ann = compute_tracking_error(r_b, r_d, mode=TE_MODE)
 
-    return te_ann
+    return te_ann, r_b, r_d
 
 
-def process_period(period,
-                   sector_annualized_volatility_by_quarter,
-                   sector_daily_volatility_by_quarter):
+def process_period(period):
     """
     Process a single time period to compute tracking errors and robustness scores.
 
@@ -244,17 +225,60 @@ def process_period(period,
 
 
     # Compute tracking error for each sector
-    sector_te = {}
     sectors = optimal_portfolios_all_te.keys()
     print(f"      Processing {len(sectors)} sectors...")
 
+    sector_te = {}
+    sector_bench_vol = {}
+    sector_bench_vol_daily = {}
+
+    timeseries_rows = []   # <- NEW
+    summary_rows = []      # <- NEW
+
     for sector in sectors:
         try:
-            te_ann = process_sector(sector, period, optimal_portfolios_all_te)
+            te_ann, r_b, r_d = process_sector(sector, period, optimal_portfolios_all_te)
             sector_te[sector] = te_ann
+
+            # --- OOS summary stats (3 months) ---
+            # total return over the 3M window
+            bench_ret = (1 + r_b).prod() - 1
+            decarb_ret = (1 + r_d).prod() - 1
+
+            # annualized vol over the same window
+            bench_vol = r_b.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
+            decarb_vol = r_d.std() * np.sqrt(TRADING_DAYS_PER_YEAR)
+
+            sector_bench_vol[sector] = float(bench_vol)
+            sector_bench_vol_daily[sector] = float(r_b.std())
+
+            # annualized TE (already computed as te_ann), but keep consistent:
+            te_oos = te_ann
+
+            summary_rows.append({
+                "Sector": sector,
+                "Period": period,
+                "Bench_Return_3m": float(bench_ret),
+                "Decarb_Return_3m": float(decarb_ret),
+                "Bench_Vol_ann": float(bench_vol),
+                "Decarb_Vol_ann": float(decarb_vol),
+                "TE_ann": float(te_oos),
+            })
+
+            # --- Timeseries in long format ---
+            tmp_ts = pd.DataFrame({
+                "Date": pd.to_datetime(r_b.index),
+                "Sector": sector,
+                "Period": period,
+                "Bench_Return": r_b.values,
+                "Decarb_Return": r_d.values,
+            })
+            timeseries_rows.append(tmp_ts)
+
         except Exception as e:
             print(f"      Error processing {sector}: {str(e)}")
             sector_te[sector] = np.nan
+
 
     # Build DataFrame
     colname = "annualized_TE" if TE_MODE == "annualized" else "daily_TE"
@@ -266,49 +290,51 @@ def process_period(period,
     te_df.to_excel(f"results/robustness/te_results_{period}_next_3m.xlsx", index=False)
     print(f"      Saved TE results for period {period}")
 
-    # Get volatility for this period
-    sector_annualized_volatility_period = sector_annualized_volatility_by_quarter.loc[
-        sector_annualized_volatility_by_quarter['period'] == period
-    ]
+    # --- Build realized benchmark volatility DF from OOS window ---
+    vol_df = pd.DataFrame({
+        "sector": list(sector_bench_vol.keys()),
+        "annualized_volatility": list(sector_bench_vol.values()),
+        "daily_volatility": list(sector_bench_vol_daily.values()),
+    })
 
-    sector_daily_volatility_period = sector_daily_volatility_by_quarter[
-    sector_daily_volatility_by_quarter['period'] == period
-    ]
+    # Merge TE + realized benchmark vol
+    merged = te_df.merge(vol_df, on="sector", how="inner")
+    merged["period"] = period   # ✅ add this
 
-    if sector_annualized_volatility_period.empty:
-        print(f"      WARNING: No volatility data found for period {period}")
-        print(f"      Skipping period {period}\n")
-        return None
+    # Choose which vol column to use based on TE_MODE
+    VOL_COL = "annualized_volatility" if TE_MODE == "annualized" else "daily_volatility"
 
-    print(sector_daily_volatility_period)
-    print(te_df)
-    if TE_MODE == "annualized":
-        VOL_COL = "annualized_volatility"
-        # Merge TE and volatility
-        merged = te_df.merge(sector_annualized_volatility_period, on="sector", how="inner")
 
-    else:
-        VOL_COL = "daily_volatility"
-        merged = te_df.merge(sector_daily_volatility_period, on="sector", how="inner")
-    
+    # ------------------------------------------------------------------
+    # Robustness metric: volatility-adjusted tracking error
+    # ------------------------------------------------------------------
 
-    # ---- Soft volatility adjustment ----
-    alpha = 0.5   # Softening exponent
+    # Raw robustness metric m^{rob}_{s,t} = TE / sigma
+    merged["Robustness_Ratio"] = merged[colname] / merged[VOL_COL]
 
-    # Step 1: robustness ratio
-    merged["Robustness_Ratio"] = merged[colname] / (merged[VOL_COL] ** alpha)
+    def minmax_within_period(x: pd.Series) -> pd.Series:
+        lo, hi = np.nanmin(x), np.nanmax(x)
+        if not np.isfinite(lo) or not np.isfinite(hi) or hi == lo:
+            # If all sectors have identical values, assign neutral score
+            return pd.Series(0.5, index=x.index)
+        return (x - lo) / (hi - lo)
 
-    # Step 2: within-period min–max normalization (invert so higher = more robust)
-    min_ratio = merged["Robustness_Ratio"].min()
-    max_ratio = merged["Robustness_Ratio"].max()
+    # Within-period min–max normalization and inversion
+    merged["Robustness_Score"] = 1.0 - minmax_within_period(merged["Robustness_Ratio"])
 
-    merged["Robustness_Score"] = (
-        max_ratio - merged["Robustness_Ratio"]
-    ) / (max_ratio - min_ratio)
 
     print(f"      Computed robustness scores for {len(merged)} sectors")
 
-    return merged[['sector', 'period', colname, VOL_COL, 'Robustness_Score']]
+    # Save timeseries for this period
+    ts_df = pd.concat(timeseries_rows, ignore_index=True)
+    os.makedirs("results/robustness", exist_ok=True)
+    ts_df.to_parquet(f"results/robustness/risk_return_timeseries_{period}.parquet", index=False)
+
+    # Save summary for this period
+    summary_df = pd.DataFrame(summary_rows)
+    summary_df.to_excel(f"results/robustness/risk_return_summary_{period}.xlsx", index=False)
+
+    return merged[['sector', 'period', colname, VOL_COL, 'Robustness_Ratio', 'Robustness_Score']]
 
 
 def validate_robustness_scores(robust_df):
@@ -391,7 +417,25 @@ def plot_robustness_metrics(robust_df_plot):
         figsize=(12, 7)
     )
 
+    plot_sector_evolution(
+        df=robust_df_plot,
+        value_col='Robustness_Ratio',
+        title='Robustness Ratio Evolution by Sector (2021-2023)',
+        ylabel='Robustness Ratio (Lower = More Robust)',
+        figsize=(12, 7)
+    )
 
+    plot_sector_evolution(
+    df=robust_df_plot,
+    value_col="Robustness_Ratio",
+    title=None,   # <- no title in figure
+    ylabel="Robustness Ratio (Lower = More Robust)",
+    figsize=(12, 7),
+    show=False,
+    savepath="results/robustness/robustness_ratio_evolution.pdf",
+)
+
+  
     # Plot 4: Robustness Score (from Robustness Ratio)
     print("Plotting Robustness Score...")
     plot_sector_evolution(
@@ -424,18 +468,12 @@ def main():
     # Create output directory
     os.makedirs("results/robustness", exist_ok=True)
 
-    # Load volatility data
-    sector_annualized_volatility_by_quarter, sector_daily_volatility_by_quarter = load_volatility()
-
-
     # Process all periods
     robustness_records = []
 
     for period in PERIODS:
         result = process_period(
-        period,
-        sector_annualized_volatility_by_quarter,
-        sector_daily_volatility_by_quarter
+        period
     )
         if result is not None:
             robustness_records.append(result)
@@ -462,6 +500,7 @@ def main():
     # Save combined results
     output_file = "results/robustness/robustness_scores_by_period.xlsx"
     robust_df.to_excel(output_file, index=False)
+    robust_df.to_parquet("results/robustness/robustness_scores_by_period.parquet", index=False)
     print(f"\nSaved robustness scores to: {output_file}")
 
     # Prepare data for plotting
@@ -484,6 +523,28 @@ def main():
     print("\nTop 5 Least Robust Sectors (Average across all periods):")
     for i, (sector, score) in enumerate(avg_robustness.tail(5).items(), 1):
         print(f"   {i}. {sector}: {score:.4f}")
+
+    # Combine and save all-period risk/return summaries
+    all_summary = []
+    all_ts = []
+
+    for p in PERIODS:
+        sx = f"results/robustness/risk_return_summary_{p}.xlsx"
+        tx = f"results/robustness/risk_return_timeseries_{p}.parquet"
+        if os.path.exists(sx): all_summary.append(pd.read_excel(sx, dtype={"Period": str}))
+        if os.path.exists(tx): all_ts.append(pd.read_parquet(tx))
+
+    if all_summary:
+        pd.concat(all_summary, ignore_index=True).to_excel(
+            "results/robustness/risk_return_summary_all_periods.xlsx", index=False
+        )
+        pd.concat(all_summary, ignore_index=True).to_parquet(
+            "results/robustness/risk_return_summary_all_periods.parquet", index=False
+        )   
+    if all_ts:
+        pd.concat(all_ts, ignore_index=True).to_parquet(
+            "results/robustness/risk_return_timeseries_all_periods.parquet", index=False
+        )
 
 
 if __name__ == "__main__":

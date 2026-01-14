@@ -14,7 +14,7 @@
   "robustness_score": "Robustness Score (0–1):\nNormalized measure of stability. Higher = more robust relative to other sectors within the same period.",
 
   "median_turnover": "Median Turnover (%):\nMedian turnover required to adjust to perturbed optimal portfolios. Higher = more sensitivity to input changes.",
-  "median_cosine_inv": "Inverted Median Cosine Similarity:\nCosine similarity measures alignment between baseline and perturbed portfolios. After inversion, higher values = greater sensitivity.",
+  "median_cosine": "Median Cosine Similarity:\nCosine similarity measures alignment between baseline and perturbed portfolios. Higher values = less sensitivity.",
   "p95_carbon_loss": "P95 Carbon Loss (pp):\n95th percentile loss in carbon reduction performance under noisy inputs. Higher = more sensitivity in climate outcome.",
   "sensitivity_score": "Sensitivity Score (0–1):\nCombined normalized score (inverted) capturing composition and outcome sensitivity. Higher = more stable, less sensitive.",
 
