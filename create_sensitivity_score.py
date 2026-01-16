@@ -238,7 +238,7 @@ for period_tag in periods:
     data_file = f"data/datasets/benchmark_weights_carbon_intensity_{period_tag}.xlsx"
     returns_file = f"Data/log_returns/sector_log_returns_comp_{period_tag}.xlsx"
     optim_file = f"results/optimal_portfolios/optimal_portfolios_all_te_{period_tag}.pkl"
-    out_dir = f"results/sensitivity_2/"
+    out_dir = f"results/sensitivity/"
     out_pickle = f"{out_dir}/sensitivity_kpis_{period_tag}.pkl"
     out_excel = f"{out_dir}/sensitivity_kpis_{period_tag}.xlsx"
 
