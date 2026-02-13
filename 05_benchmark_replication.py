@@ -1,3 +1,23 @@
+"""
+Benchmark replication and out-of-sample sector portfolio returns
+
+For each quarterly period this script:
+1. Loads LSEG price (close, split-adjusted) and FFNOSH (float-adjusted shares
+   outstanding) data for the 3-month out-of-sample window following the
+   portfolio construction date.
+2. Maps LSEG type codes to ticker symbols and handles duplicate share classes
+   (e.g. GOOGL/GOOG, BRK.A/BRK.B) by computing float-weighted prices.
+3. Computes daily sector-cap-weighted returns using Yahoo adjusted close prices.
+4. Saves per-sector daily returns, quarterly annualized volatilities, and an
+   overall 2021–2023 annualized volatility summary.
+
+Outputs (saved to data/benchmark_returns_volatility/ and data/daily_returns_3m/):
+- sector_portfolio_returns_all_periods.xlsx
+- sector_daily_volatility_by_quarter.xlsx
+- sector_annualized_volatility_by_quarter.xlsx
+- sector_annualized_volatility_2021_2023.xlsx
+- daily_returns_<period>.xlsx  (one file per quarter)
+"""
 import pandas as pd
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
@@ -119,7 +139,6 @@ def main():
         price_agg, ffnosh_agg = aggregate_duplicates(price_next_3m, ffnosh_next_3m)
         print("   ✓ Aggregated duplicate tickers")
 
-        # --- Check NaNs in PRICE ---
         print("\n[4/5] Checking for missing values...")
         # --- Check NaNs in PRICE ---
         price_next_3m = price_next_3m.loc[:, ~price_next_3m.columns.duplicated()]
@@ -190,6 +209,10 @@ def main():
         adj_close_bt.index = adj_close_bt.Date
         adj_close_bt.drop(columns='Date', inplace=True)
 
+        # Tickers present in float_mcap but absent from the sector map are those
+        # not covered by the benchmark dataset (e.g. delisted or newly added).
+        # These same tickers should be the only ones with all-NaN Yahoo prices,
+        # confirming the two sources are consistent before computing returns.
         nan_columns = adj_close_bt.columns[adj_close_bt.isna().any()]
         assert list(sorted(nan_columns)) == list(sorted(extra_in_float_mcap.tolist()))
         daily_returns_next_3m = adj_close_bt.pct_change().dropna()

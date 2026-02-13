@@ -24,6 +24,19 @@ def l1_turnover_pct(w_from, w_to):
     return 0.5 * float(np.abs(w_to - w_from).sum()) * 100.0
 
 def cosine_similarity(a, b):
+    """
+    Compute the cosine similarity between two weight vectors.
+
+    Parameters
+    ----------
+    a, b : array-like
+        Portfolio weight vectors of equal length.
+
+    Returns
+    -------
+    float
+        Cosine similarity in [-1, 1]; returns np.nan if either vector is zero.
+    """
     a = np.asarray(a); b = np.asarray(b)
     na = np.linalg.norm(a); nb = np.linalg.norm(b)
     if na == 0 or nb == 0:
@@ -46,6 +59,21 @@ def carbon_reduction_pct(w, w_b, c_vec):
     return (cb - co) / cb * 100.0
 
 def nanpercentile(x, q):
+    """
+    Compute a percentile ignoring NaN and infinite values.
+
+    Parameters
+    ----------
+    x : array-like
+        Input data, may contain NaN or inf.
+    q : float
+        Percentile to compute, in [0, 100].
+
+    Returns
+    -------
+    float
+        The q-th percentile of finite values; np.nan if no finite values exist.
+    """
     x = np.asarray(x, dtype=float)
     x = x[np.isfinite(x)]
     return float(np.percentile(x, q)) if x.size else np.nan
@@ -61,7 +89,38 @@ def sensitivity_kpis_from_trials(
     w_opt0=None           # baseline optimized weights; if None, will solve
 ):
     """
-    Returns a dict with the KPIs + the raw per-trial series (for plots).
+    Compute sensitivity KPIs by comparing perturbed portfolio weights to the
+    baseline optimal portfolio.
+
+    Parameters
+    ----------
+    w_trials : np.ndarray, shape (n_trials, N)
+        Optimized weights from each bootstrap / noise trial.
+    te_trials_annual : np.ndarray, shape (n_trials,)
+        Annualised tracking error (decimal) for each trial.
+    R_clean : pd.DataFrame
+        Baseline monthly log-return matrix (rows = months, cols = assets),
+        with the Date column already removed.
+    w_bench : np.ndarray, shape (N,)
+        Benchmark portfolio weights.
+    c_vec : np.ndarray, shape (N,)
+        Carbon intensity per asset.
+    Sigma_fn : callable
+        Function mapping a return DataFrame to a covariance matrix.
+    te_cap : float, optional
+        Annualised TE cap used in the baseline optimisation (default 2%).
+    w_opt0 : np.ndarray or None, optional
+        Pre-computed baseline optimal weights. If None, the baseline
+        optimisation is solved internally.
+
+    Returns
+    -------
+    dict
+        Keys:
+        - 'Median_Turnover_pct'  : median one-way turnover vs baseline (%)
+        - 'Median_Cosine'        : median cosine similarity vs baseline
+        - 'P95_CarbonLoss_pp'    : 95th-percentile carbon reduction loss (pp)
+        - 'series'               : dict of raw per-trial arrays and baseline info
     """
     # Baseline (with clean Sigma)
     w_opt0, te0, Rstar0, Sigma0 = baseline_diagnostics(R_clean, w_bench, c_vec, Sigma_fn, te_cap, w_opt0)
@@ -109,8 +168,32 @@ def sensitivity_kpis_from_trials(
 # ---------- baseline (can reuse your precomputed dict) ----------
 def baseline_diagnostics(R_clean, w_bench, c_vec, Sigma_fn, te_cap=0.02, w_opt=None):
     """
-    Returns (w_opt0, te0_annual, Rstar0, Sigma0)
-    - If w_opt is None, solves the baseline optimization; otherwise uses provided w_opt.
+    Compute baseline portfolio diagnostics (Sigma, optimal weights, TE, carbon reduction).
+
+    Parameters
+    ----------
+    R_clean : pd.DataFrame
+        Monthly log-return matrix (rows = months, cols = assets), Date column removed.
+    w_bench : np.ndarray, shape (N,)
+        Benchmark portfolio weights.
+    c_vec : np.ndarray, shape (N,)
+        Carbon intensity per asset.
+    Sigma_fn : callable
+        Function mapping a return DataFrame to a covariance matrix.
+    te_cap : float, optional
+        Annualised TE cap for the baseline optimisation (default 2%).
+    w_opt : np.ndarray or None, optional
+        Pre-computed optimal weights. If None, the carbon-minimisation QP is
+        solved using the baseline Sigma.
+
+    Returns
+    -------
+    tuple
+        (w_opt0, te0_annual, Rstar0_pct, Sigma0) where:
+        - w_opt0       : optimal weights (N,)
+        - te0_annual   : realised annualised TE in decimal (e.g. 0.02 == 2%)
+        - Rstar0_pct   : baseline carbon reduction in percent
+        - Sigma0       : covariance matrix estimated from R_clean
     """
     # Sigma at baseline (on clean returns)
     Sigma0 = Sigma_fn(R_clean)
@@ -136,21 +219,15 @@ def baseline_diagnostics(R_clean, w_bench, c_vec, Sigma_fn, te_cap=0.02, w_opt=N
     return w_opt0, te0, Rstar0, Sigma0
 # === UTILITIES ===
 
-def sigma_raw_fn(R_clean):
-    return R_clean.cov()
-
 def sigma_reg_fn(R_clean):
+    """
+    Return a regularised covariance matrix using Ledoit-Wolf shrinkage plus
+    a small ridge term (λI, λ=1e-5) to ensure positive definiteness.
+    """
     lw = LedoitWolf().fit(R_clean)
     Sigma_shrink = lw.covariance_
     lambda_I = 1e-5
     return Sigma_shrink + lambda_I * np.eye(Sigma_shrink.shape[0])
-
-def simulate_parametric_noise(mu, Sigma, T, n_trials):
-    return [np.random.multivariate_normal(mu, Sigma, T) for _ in range(n_trials)]
-
-def bootstrap_returns(R_clean_np, n_trials):
-    T = R_clean_np.shape[0]
-    return [R_clean_np[np.random.choice(T, T, replace=True)] for _ in range(n_trials)]
 
 def compute_bootstrap_weights(
     R_clean: pd.DataFrame,
@@ -162,16 +239,36 @@ def compute_bootstrap_weights(
     seed_base: int = 0
 ):
     """
-    Bootstrap sensitivity:
-    Each trial draws T months with replacement from the T-month estimation window,
-    re-estimates Sigma using Sigma_fn (e.g., LedoitWolf shrinkage),
-    and resolves the carbon-minimization problem under the TE cap.
+    Run bootstrap sensitivity analysis by re-estimating Sigma and re-solving
+    the carbon-minimisation QP on each bootstrap resample.
+
+    For each trial, T months are drawn with replacement from the T-month
+    estimation window. Sigma is re-estimated with Sigma_fn (e.g., Ledoit-Wolf
+    shrinkage) and the carbon-minimisation problem is resolved under the TE cap.
+
+    Parameters
+    ----------
+    R_clean : pd.DataFrame
+        Monthly log-return matrix (rows = months, cols = assets), Date removed.
+    w_bench : np.ndarray, shape (N,)
+        Benchmark portfolio weights.
+    c_vec : np.ndarray, shape (N,)
+        Carbon intensity per asset.
+    Sigma_fn : callable
+        Function mapping a return DataFrame to a covariance matrix.
+    te_cap : float, optional
+        Annualised TE cap (default 2%).
+    n_trials : int, optional
+        Number of bootstrap resamples (default 200).
+    seed_base : int, optional
+        Base seed for reproducibility; trial k uses seed_base + k.
 
     Returns
     -------
     weights : np.ndarray, shape (n_trials, N)
+        Optimal weights for each trial; rows with failed solves contain NaN.
     tracking_errors : np.ndarray, shape (n_trials,)
-        realized annualized TE (decimal, e.g., 0.02)
+        Realised annualised TE (decimal) for each trial; NaN on failure.
     """
     N = R_clean.shape[1]
     T = R_clean.shape[0]
@@ -214,19 +311,11 @@ def compute_bootstrap_weights(
 
     return np.array(weights), np.array(tracking_errors)
 
-
-def compute_hhi(weights):
-    return np.sum(np.square(weights))
-
-def check_total_variability(R_clean, sector_name):
-    sdev = R_clean.std(axis=0)
-    annualised_sdev = sdev * (12**0.5)
-    return annualised_sdev
-
 # --- parameters ---
+# Quarterly period codes (MMYY format) spanning Mar 2021 – Dec 2023
 periods = ["0321", "0621", "0921", "1221", "0322", "0622", "0922", "1222",
            "0323", "0623", "0923", "1223"]
-n_trials = 200
+n_trials = 200  # Number of bootstrap resamples per sector per period
 
 # --- containers ---
 all_sensitivity = []
@@ -340,21 +429,47 @@ for period_tag in periods:
 df = pd.concat(all_sensitivity, ignore_index=True)
 
 def minmax_norm_grouped(df, col):
+    """
+    Apply min-max normalisation to a column within each Period group.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing at least a 'Period' column and `col`.
+    col : str
+        Name of the column to normalise.
+
+    Returns
+    -------
+    pd.Series
+        Normalised values in [0, 1]; returns 0 when all values in a group
+        are identical (zero range).
+    """
     return df.groupby("Period")[col].transform(
         lambda x: (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0
     )
 
 
+# --- Build Sensitivity Score ---
+# Each of the three raw KPIs is normalised to [0, 1] within each period so
+# that sectors are ranked relative to each other, not on absolute scale.
+
+# Higher turnover => less stable => higher instability
 df["Turnover_norm"] = minmax_norm_grouped(df, "Median_Turnover_pct")
 
+# Cosine similarity is inverted so that lower alignment => higher instability,
+# then normalised within period
 df["Inv_Median_Cosine"] = 1 - df["Median_Cosine"]
 df["Cosine_norm"]   = minmax_norm_grouped(df, "Inv_Median_Cosine")
 
+# Larger carbon loss => more sensitive => higher instability
 df["CarbonLoss_norm"] = minmax_norm_grouped(df, "P95_CarbonLoss_pp")
 
-df["Sensitivity_Score_raw"] =1/3 * (
-    df["Turnover_norm"] +  df["Cosine_norm"] +  df["CarbonLoss_norm"])
+# Equal-weight composite instability score (each component contributes 1/3)
+df["Sensitivity_Score_raw"] = 1/3 * (
+    df["Turnover_norm"] + df["Cosine_norm"] + df["CarbonLoss_norm"])
 
+# Invert so that higher Sensitivity_Score means MORE stable (less sensitive)
 df["Sensitivity_Score"] = 1 - df["Sensitivity_Score_raw"]
 
 # --- save and plot ---

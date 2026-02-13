@@ -1,6 +1,5 @@
 """
-Dataset Creation Script for Sectoral Decarbonisation Project
-============================================================
+Dataset creation script.
 
 This script creates standardized datasets for multiple time periods:
 1. Benchmark weights and carbon intensity DataFrame (GICS Sector, Carbon Intensity, weight_in_sector)
@@ -18,7 +17,28 @@ import miceforest as mf
 
 
 class DatasetCreator:
-    """Creates datasets for a specific time period"""
+    """
+    Creates standardized datasets for a single S&P 500 rebalancing period.
+
+    The pipeline proceeds as follows:
+      1. Load constituent symbols and GICS sectors (LSEG + Wikipedia)
+      2. Load end-of-period prices and free-float shares (LSEG)
+      3. Calculate float market capitalisation
+      4. Remove duplicate tickers (dual-class shares)
+      5. Load Scope 1/2/3 emissions and revenue (merged across periods by script 02)
+      6. Impute any remaining missing revenue from a delisted-company lookup
+      7. Impute residual missing scope emissions with MICE (PMM)
+      8. Remove stocks that lack a full two-year price history before the period
+      9. Compute intra-sector market-cap weights
+      10. Compute monthly log returns from Yahoo adjusted prices
+      11. Save benchmark/carbon dataset and per-sector log-return sheets
+
+    Key attributes set in __init__:
+        period (str): Period code, e.g. '1221' for December 2021.
+        data_dir (Path): Root directory for all input/output data.
+        output_dir (Path): data/datasets/ — benchmark weight files.
+        log_returns_dir (Path): data/log_returns/ — sector return files.
+    """
 
     def __init__(self, period: str, data_dir: str = "data"):
         """
@@ -50,7 +70,23 @@ class DatasetCreator:
         self.log_returns_dir.mkdir(parents=True, exist_ok=True)
 
     def load_symbol_data(self):
-        """Load symbol, type, and GICS sector information"""
+        """
+        Load constituent symbols, LSEG type codes, and GICS sectors.
+
+        Reads ticker and company-name data from the LSEG symbol file, then
+        merges GICS sector labels from a pre-built Wikipedia mapping file.
+        Any companies not covered by the Wikipedia file are filled from a
+        manual mapping CSV (data/gics_sector_manual_mapping.csv) if present.
+
+        Two hardcoded symbol corrections are applied after the merge:
+        - "BERKSHIRE HATHAWAY 'B'" uses the Yahoo Finance ticker "BRK-B"
+          (LSEG stores it without the hyphen).
+        - "BF.B" is renamed to "BF-B" for the same reason (dot not valid
+          in Yahoo tickers).
+
+        Returns:
+            pd.DataFrame: Columns NAME, SYMBOL, TYPE, GICS Sector.
+        """
         print(f"  Loading symbol data from {self.symbol_file.name}...")
 
         # Read type and symbol info from LSEG file (following original notebook logic)
@@ -191,7 +227,24 @@ class DatasetCreator:
         return df
 
     def load_price_and_shares(self, symbols_df):
-        """Load price and float shares data"""
+        """
+        Load end-of-period closing prices and free-float shares outstanding.
+
+        Reads the CLOSE PRICE and FFNOSH sheets from the LSEG price/dividend
+        file, filters to the last trading day of the target month, and merges
+        both series onto the symbol DataFrame. Where a company appears under
+        multiple share classes (dual listings), ffnosh values are summed and
+        prices are weighted-averaged by ffnosh so each ticker has a single
+        combined entry.
+
+        Args:
+            symbols_df (pd.DataFrame): Output of load_symbol_data(); must
+                contain NAME, SYMBOL, and TYPE columns.
+
+        Returns:
+            pd.DataFrame: Input DataFrame extended with
+                'Price last day <period>' and 'ffnosh last day <period>'.
+        """
         print(f"  Loading price and shares data from {self.price_div_file.name}...")
 
         # Load close prices - company names are in columns (header row)
@@ -297,7 +350,33 @@ class DatasetCreator:
         return df
 
     def load_scope_emissions(self, df):
-        """Load scope emissions and revenue data from filled files"""
+        """
+        Load Scope 1, 2, and 3 emissions, revenue, and imputation metadata.
+
+        Reads the merged emissions files produced by script 02
+        (data/merged_scope_emissions/scope_*_all_periods_filled.xlsx) alongside
+        the corresponding unfilled originals. The "_filled" files contain
+        forward/backward-filled values from script 02's time-series merge;
+        any remaining gaps are later imputed by impute_scope_emissions() in
+        this script. For each scope, a binary 'Filled Scope N Count' column
+        is created (1 = value was NaN in the unfilled file but present in
+        the filled file, 0 = value was originally present). Revenue is read
+        directly from the LSEG carbon file (not filled).
+
+        After merging, computes:
+        - 'Scope 1+2+3': sum of the three scope values.
+        - 'Carbon Intensity': Scope 1+2+3 divided by Revenue
+          (units: tCO2e per revenue unit).
+
+        Args:
+            df (pd.DataFrame): Must contain TYPE column (LSEG company code)
+                used as the join key for emissions series.
+
+        Returns:
+            pd.DataFrame: Input DataFrame extended with Scope 1, Scope 2,
+                Scope 3, Revenue, Filled Scope 1/2/3 Count, Scope 1+2+3,
+                and Carbon Intensity columns.
+        """
         print(f"  Loading emissions data from filled files...")
 
         # Define paths to filled and unfilled files
@@ -601,7 +680,13 @@ class DatasetCreator:
         print(f"      Scope 2: {data['Scope 2'].isna().sum()}")
         print(f"      Scope 3: {data['Scope 3'].isna().sum()}")
 
-        # Initialize kernel (this builds multiple trees for imputation)
+        # Initialize MICE kernel.
+        # num_datasets=3: build 3 independent imputed datasets to reduce
+        #   Monte-Carlo variance; we use dataset 0 as the point estimate.
+        # mean_match_candidates=5: for each missing value, sample from the
+        #   5 closest observed candidates (PMM) to preserve the marginal
+        #   distribution and avoid out-of-range predictions.
+        # random_state=1: fixed seed for reproducibility.
         kernel = mf.ImputationKernel(
             data=data,
             num_datasets=3,
@@ -609,8 +694,9 @@ class DatasetCreator:
             random_state=1
         )
 
-        # Run MICE with PMM
-        kernel.mice(5)  # 5 iterations
+        # Run MICE for 5 iterations; convergence is typically reached by
+        # iteration 3-5 for the variable count in this dataset.
+        kernel.mice(5)
 
         # Extract imputed dataset
         completed_data = kernel.complete_data(dataset=0)
@@ -694,7 +780,21 @@ class DatasetCreator:
         return df_filtered
 
     def calculate_weights(self, df):
-        """Calculate float market cap and sector weights"""
+        """
+        Calculate float market capitalisation and intra-sector weights.
+
+        Computes float_mcap = price × ffnosh, then normalises within each
+        GICS sector so that weights sum to 1.0. Also adds a rank_in_sector
+        column (1 = largest by float_mcap within the sector).
+
+        Args:
+            df (pd.DataFrame): Must contain 'Price last day <period>',
+                'ffnosh last day <period>', and 'GICS Sector' columns.
+
+        Returns:
+            pd.DataFrame: Input DataFrame extended with float_mcap,
+                weight_in_sector, and rank_in_sector columns.
+        """
         print(f"  Calculating market cap and sector weights...")
 
         # Calculate float market cap
@@ -702,7 +802,8 @@ class DatasetCreator:
         ffnosh_col = f'ffnosh last day {self._format_period()}'
         df['float_mcap'] = pd.to_numeric(df[price_col], errors='coerce') * pd.to_numeric(df[ffnosh_col], errors='coerce')
 
-        # DEBUG: Check for missing GICS Sector
+        # Warn if any companies are missing a GICS sector; they will receive
+        # NaN weights and be excluded from sector-level aggregations.
         missing_gics = df[df['GICS Sector'].isna()]
         if len(missing_gics) > 0:
             print(f"\n  WARNING: Found {len(missing_gics)} companies with missing GICS Sector:")
@@ -732,7 +833,18 @@ class DatasetCreator:
         return df
 
     def load_log_returns(self):
-        """Load and compute log returns from adjusted prices"""
+        """
+        Load adjusted closing prices and compute monthly log returns.
+
+        Reads the Yahoo Finance adjusted-price file for the period, resamples
+        to month-end, and computes log returns as ln(P_t / P_{t-1}). Zeros
+        are replaced with NaN and forward-filled before resampling to avoid
+        spurious zero returns from missing data.
+
+        Returns:
+            pd.DataFrame: Monthly log returns with a 'Date' column and one
+                column per ticker symbol.
+        """
         print(f"  Computing log returns from {self.adj_price_file.name}...")
 
         # Load adjusted prices from Yahoo
@@ -753,7 +865,20 @@ class DatasetCreator:
         return log_returns
 
     def create_sector_log_returns(self, composition_df, log_returns_df):
-        """Create log returns organized by sector"""
+        """
+        Split the full log-return matrix into per-sector DataFrames.
+
+        Args:
+            composition_df (pd.DataFrame): Must contain SYMBOL and GICS Sector
+                columns (output of calculate_weights).
+            log_returns_df (pd.DataFrame): Full log-return matrix with a Date
+                column and one column per ticker (output of load_log_returns).
+
+        Returns:
+            dict[str, pd.DataFrame]: Mapping from GICS sector name to a
+                DataFrame containing Date and the log returns for all
+                tickers in that sector that are present in log_returns_df.
+        """
         print(f"  Creating sector-wise log returns...")
 
         # Get list of sectors
@@ -778,7 +903,19 @@ class DatasetCreator:
         return sector_returns
 
     def save_benchmark_weights_carbon(self, df):
-        """Save benchmark weights and carbon intensity DataFrame"""
+        """
+        Save the benchmark weights and carbon intensity dataset to Excel.
+
+        Selects the columns needed for portfolio construction and carbon
+        analysis, sorts by GICS sector and descending intra-sector weight,
+        and writes to data/datasets/benchmark_weights_carbon_intensity_<period>.xlsx.
+
+        Args:
+            df (pd.DataFrame): Fully processed composition DataFrame.
+
+        Returns:
+            pd.DataFrame: The subset of columns written to disk.
+        """
         # Select required columns including scope emissions, revenue, and imputation flags
         output_df = df[[
             'SYMBOL', 'NAME', 'GICS Sector',
@@ -800,13 +937,33 @@ class DatasetCreator:
         return output_df
 
     def save_full_composition(self, df):
-        """Save full composition dataset (for backward compatibility)"""
+        """
+        Save the full composition DataFrame to Excel.
+
+        Writes every column (including intermediate columns such as raw
+        prices and ffnosh) to data/datasets/dataset_comp_<period>.xlsx.
+        This file mirrors the schema expected by earlier analysis notebooks
+        that pre-date the benchmark_weights_carbon_intensity output.
+
+        Args:
+            df (pd.DataFrame): Fully processed composition DataFrame.
+        """
         output_file = self.output_dir / f"dataset_comp_{self.period}.xlsx"
         df.to_excel(output_file, index=False)
         print(f"  Saved full composition to {output_file}")
 
     def save_sector_log_returns(self, sector_returns):
-        """Save sector log returns to Excel file with multiple sheets"""
+        """
+        Save per-sector log returns to a multi-sheet Excel file.
+
+        Writes one sheet per GICS sector to
+        data/log_returns/sector_log_returns_comp_<period>.xlsx.
+        Sheet names are truncated to 31 characters (Excel limit).
+
+        Args:
+            sector_returns (dict[str, pd.DataFrame]): Output of
+                create_sector_log_returns().
+        """
         output_file = self.log_returns_dir / f"sector_log_returns_comp_{self.period}.xlsx"
 
         with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
@@ -881,9 +1038,20 @@ def create_all_datasets(periods=None, data_dir="data", save_full=True):
     Create datasets for multiple time periods
 
     Args:
-        periods: List of period codes (default: ['1221', '0322', '0622', '0922', '1222'])
-        data_dir: Root data directory path
-        save_full: Whether to save full composition datasets
+        periods: List of period codes (default: all 12 quarters from 0321
+            to 1223). Each code is 'MMYY', e.g. '1221' = December 2021.
+        data_dir: Root data directory path.
+        save_full: Whether to save the full composition dataset alongside
+            the benchmark weights file for each period.
+
+    Returns:
+        dict[str, dict]: Keyed by period code. Each value contains:
+            - 'status': 'success' or 'failed'
+            - 'benchmark' (pd.DataFrame): benchmark weights/carbon data
+              (only present on success)
+            - 'sector_returns' (dict): per-sector log-return DataFrames
+              (only present on success)
+            - 'error' (str): error message (only present on failure)
     """
     if periods is None:
         periods = ["0321", "0621", "0921", "1221", "0322", "0622", "0922", "1222", "0323", "0623", "0923", "1223"]
@@ -893,7 +1061,10 @@ def create_all_datasets(periods=None, data_dir="data", save_full=True):
     print(f"# Creating datasets for {len(periods)} time periods")
     print(f"{'#'*60}")
 
-    results = {}
+    results: dict[str, dict] = {}
+    # Each entry has keys: 'status' ('success'|'failed'),
+    # and on success: 'benchmark' (pd.DataFrame), 'sector_returns' (dict).
+    # On failure: 'error' (str).
 
     for period in periods:
         try:

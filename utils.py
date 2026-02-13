@@ -37,7 +37,6 @@ def sigma_raw_fn(R_clean):
     """
     return R_clean.cov()
 
-
 def sigma_shrink_fn(R_clean):
     """
     Calculate a shrunk covariance matrix using Ledoit-Wolf shrinkage estimator.

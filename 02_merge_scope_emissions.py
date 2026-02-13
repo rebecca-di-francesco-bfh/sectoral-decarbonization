@@ -1,6 +1,5 @@
 """
-Merge Scope Emissions Data Across All Time Periods
-===================================================
+Merge scope emissions data aross all time periods.
 
 This script reads scope emissions data from all time periods and creates
 consolidated files with:
@@ -23,7 +22,14 @@ warnings.filterwarnings('ignore')
 
 
 class ScopeEmissionsMerger:
-    """Merges scope emissions data across all time periods"""
+    """Merges scope emissions data across all time periods.
+
+    Reads per-period LSEG Excel files from `data/lseg/scope_emissions/`,
+    consolidates them into single DataFrames (Scope 1, 2, 3), and saves the
+    results to `data/merged_scope_emissions/`. When the same date appears in
+    multiple period files the first occurrence is kept. Also creates
+    forward-filled versions limited to 2021-2023.
+    """
 
     def __init__(self, data_dir: str = "data"):
         """
@@ -38,9 +44,6 @@ class ScopeEmissionsMerger:
 
         # Create output directory if it doesn't exist
         self.output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Store conflicts for later export
-        self.all_conflicts = {}
 
     def get_available_periods(self):
         """
@@ -125,133 +128,6 @@ class ScopeEmissionsMerger:
 
         return df
 
-    def check_duplicate_values(self, all_dataframes_with_periods: list, sheet_name: str):
-        """
-        Check for cases where the same date and company have different values
-
-        Args:
-            all_dataframes_with_periods: List of tuples (DataFrame, period_code)
-            sheet_name: Name of the sheet being processed
-        """
-        if len(all_dataframes_with_periods) < 2:
-            return
-
-        print(f"  Checking for conflicting values in duplicate dates...")
-
-        conflicts = []
-        conflict_details = []  # For detailed Excel export
-
-        # Separate dataframes and periods
-        all_dataframes = [df for df, _ in all_dataframes_with_periods]
-        periods = [period for _, period in all_dataframes_with_periods]
-
-        # Create a combined dataframe with all data (including duplicates)
-        combined_with_dupes = pd.concat(all_dataframes, axis=0)
-
-        # Create a mapping to track which period each row came from
-        period_mapping = []
-        for df, period in all_dataframes_with_periods:
-            period_mapping.extend([period] * len(df))
-
-        # Find duplicate dates
-        duplicate_dates = combined_with_dupes.index[combined_with_dupes.index.duplicated(keep=False)]
-        unique_duplicate_dates = duplicate_dates.unique()
-
-        if len(unique_duplicate_dates) == 0:
-            print(f"    No duplicate dates found")
-            return
-
-        print(f"    Found {len(unique_duplicate_dates)} dates that appear in multiple period files")
-
-        # Check each duplicate date
-        for date in unique_duplicate_dates:
-            # Get all rows for this date
-            rows = combined_with_dupes.loc[date]
-
-            # Find which periods this date appears in
-            date_indices = [i for i, d in enumerate(combined_with_dupes.index) if d == date]
-            periods_for_date = [period_mapping[i] for i in date_indices]
-
-            # If only one row, it's not really a duplicate (shouldn't happen but check anyway)
-            if isinstance(rows, pd.Series):
-                continue
-
-            # Check each company column
-            for company_code in rows.columns:
-                values = rows[company_code].dropna()
-
-                if len(values) > 1:
-                    # Check if values are different
-                    unique_values = values.unique()
-                    if len(unique_values) > 1:
-                        # Store conflict info
-                        conflicts.append({
-                            'Date': date,
-                            'Company Code': company_code,
-                            'Values': unique_values.tolist(),
-                            'Count': len(values)
-                        })
-
-                        # Store detailed info for Excel export
-                        # Get the actual values from each period
-                        period_values = {}
-                        for i, (val, period) in enumerate(zip(values, periods_for_date)):
-                            if not pd.isna(val):
-                                period_values[period] = val
-
-                        conflict_details.append({
-                            'Date': date,
-                            'Company Code': company_code,
-                            'Period Values': period_values
-                        })
-
-        # Store conflicts for this sheet
-        if len(conflict_details) > 0:
-            self.all_conflicts[sheet_name] = conflict_details
-
-        if len(conflicts) > 0:
-            print(f"\n    ⚠️  WARNING: Found {len(conflicts)} cases with conflicting values:")
-            print(f"    {'='*70}")
-
-            # Analyze which periods are involved in conflicts
-            period_pairs = {}
-            for conflict_detail in conflict_details:
-                period_values = conflict_detail['Period Values']
-                periods_involved = tuple(sorted(period_values.keys()))
-
-                if periods_involved not in period_pairs:
-                    period_pairs[periods_involved] = 0
-                period_pairs[periods_involved] += 1
-
-            # Check if 1223 is always involved
-            conflicts_with_1223 = sum(count for periods, count in period_pairs.items() if '1223' in periods)
-            total_conflicts = len(conflict_details)
-
-            print(f"    Total conflicts: {total_conflicts}")
-            print(f"    Conflicts involving period 1223: {conflicts_with_1223} ({conflicts_with_1223/total_conflicts*100:.1f}%)")
-
-            if conflicts_with_1223 == total_conflicts:
-                print(f"    ✓ ALL conflicts involve period 1223")
-
-            print(f"\n    Period combinations causing conflicts:")
-            for periods, count in sorted(period_pairs.items(), key=lambda x: x[1], reverse=True)[:10]:
-                print(f"      {' vs '.join(periods)}: {count} conflicts")
-
-            # Show first 5 conflicts in detail
-            print(f"\n    First 5 conflict examples:")
-            for i, conflict in enumerate(conflicts[:5]):
-                date_str = conflict['Date'].strftime('%d.%m.%Y') if hasattr(conflict['Date'], 'strftime') else str(conflict['Date'])
-                print(f"    {i+1}. Date: {date_str}, Company: {conflict['Company Code']}")
-                print(f"       Different values found: {conflict['Values']}")
-
-            if len(conflicts) > 5:
-                print(f"    ... and {len(conflicts) - 5} more conflicts (see conflicts_report.xlsx for full details)")
-
-            print(f"    {'='*70}")
-            print(f"    Note: Keeping the first occurrence in each case")
-        else:
-            print(f"    ✓ No conflicting values found (duplicate dates have identical values)")
-
     def merge_data_for_sheet(self, periods: list, sheet_name: str) -> pd.DataFrame:
         """
         Merge data across all periods for a specific sheet
@@ -296,9 +172,6 @@ class ScopeEmissionsMerger:
         # This will align by column names (company codes) and stack dates
         print(f"  Combining data from {len(all_dataframes_with_periods)} period files...")
 
-        # Check for conflicts before removing duplicates
-        self.check_duplicate_values(all_dataframes_with_periods, sheet_name)
-
         all_dataframes = [df for df, _ in all_dataframes_with_periods]
         combined_df = pd.concat(all_dataframes, axis=0)
 
@@ -319,221 +192,6 @@ class ScopeEmissionsMerger:
             print(f"  Date range: {combined_df.index[0].strftime('%d.%m.%Y')} to {combined_df.index[-1].strftime('%d.%m.%Y')}")
 
         return combined_df
-
-    def analyze_conflict_patterns(self):
-        """
-        Analyze patterns in conflicts to identify problematic periods
-        """
-        if not self.all_conflicts:
-            return
-
-        print(f"\n{'='*80}")
-        print("Conflict Pattern Analysis")
-        print(f"{'='*80}")
-
-        # Count conflicts by period across all sheets
-        period_conflict_count = {}
-        period_pair_count = {}
-
-        # Special analysis for 1223
-        conflicts_1223_vs_others_same = 0
-        conflicts_1223_examples = []
-
-        for sheet_name, conflicts in self.all_conflicts.items():
-            for conflict in conflicts:
-                period_values = conflict['Period Values']
-                periods_involved = sorted(period_values.keys())
-
-                # Count individual periods
-                for period in periods_involved:
-                    if period not in period_conflict_count:
-                        period_conflict_count[period] = 0
-                    period_conflict_count[period] += 1
-
-                # Count period pairs
-                periods_tuple = tuple(periods_involved)
-                if periods_tuple not in period_pair_count:
-                    period_pair_count[periods_tuple] = 0
-                period_pair_count[periods_tuple] += 1
-
-                # Check if 1223 is different but all other periods have the same value
-                if '1223' in period_values:
-                    value_1223 = period_values['1223']
-                    other_values = [v for p, v in period_values.items() if p != '1223']
-
-                    if len(other_values) > 0:
-                        # Check if all other values are the same
-                        other_values_unique = list(set(other_values))
-
-                        # If all other periods have the same value, and it's different from 1223
-                        if len(other_values_unique) == 1 and other_values_unique[0] != value_1223:
-                            conflicts_1223_vs_others_same += 1
-
-                            # Store example (limit to first 5)
-                            if len(conflicts_1223_examples) < 5:
-                                conflicts_1223_examples.append({
-                                    'sheet': sheet_name,
-                                    'date': conflict['Date'],
-                                    'company': conflict['Company Code'],
-                                    'value_1223': value_1223,
-                                    'value_others': other_values_unique[0],
-                                    'other_periods': [p for p in period_values.keys() if p != '1223']
-                                })
-
-        # Analysis
-        total_conflicts = sum(len(conflicts) for conflicts in self.all_conflicts.values())
-        conflicts_with_1223 = period_conflict_count.get('1223', 0)
-
-        print(f"\nTotal conflicts across all sheets: {total_conflicts}")
-        print(f"\nPeriods involved in conflicts:")
-        for period, count in sorted(period_conflict_count.items(), key=lambda x: x[1], reverse=True):
-            percentage = count / total_conflicts * 100
-            print(f"  {period}: {count} conflicts ({percentage:.1f}%)")
-
-        print(f"\nMost common period combinations:")
-        for periods, count in sorted(period_pair_count.items(), key=lambda x: x[1], reverse=True)[:10]:
-            percentage = count / total_conflicts * 100
-            print(f"  {' vs '.join(periods)}: {count} conflicts ({percentage:.1f}%)")
-
-        # Check if 1223 is always involved
-        if conflicts_with_1223 == total_conflicts:
-            print(f"\n⚠️  FINDING: Period 1223 is involved in ALL {total_conflicts} conflicts!")
-            print(f"   This suggests the 1223 period file may have different/updated data.")
-        elif conflicts_with_1223 > 0:
-            print(f"\n⚠️  FINDING: Period 1223 is involved in {conflicts_with_1223}/{total_conflicts} conflicts ({conflicts_with_1223/total_conflicts*100:.1f}%)")
-        else:
-            print(f"\n✓ Period 1223 is not involved in any conflicts")
-
-        # Special analysis: 1223 different but all others the same
-        if conflicts_with_1223 > 0:
-            print(f"\n{'='*70}")
-            print(f"SPECIAL ANALYSIS: Cases where 1223 differs but all other periods agree")
-            print(f"{'='*70}")
-            print(f"Conflicts where 1223 has a different value but all other periods")
-            print(f"have the SAME value: {conflicts_1223_vs_others_same}/{conflicts_with_1223}")
-            print(f"({conflicts_1223_vs_others_same/conflicts_with_1223*100:.1f}% of conflicts involving 1223)")
-
-            if conflicts_1223_vs_others_same == conflicts_with_1223:
-                print(f"\n✓ In ALL cases, 1223 is the ONLY period with a different value!")
-                print(f"  This strongly suggests that period 1223 has updated/revised data.")
-            elif conflicts_1223_vs_others_same > 0:
-                print(f"\n⚠️  In {conflicts_1223_vs_others_same} cases, 1223 is the only outlier.")
-                print(f"  In {conflicts_with_1223 - conflicts_1223_vs_others_same} cases, other periods also differ.")
-
-            # Show examples
-            if conflicts_1223_examples:
-                print(f"\nExamples of 1223 vs all others agreeing:")
-                for i, ex in enumerate(conflicts_1223_examples, 1):
-                    date_str = ex['date'].strftime('%d.%m.%Y') if hasattr(ex['date'], 'strftime') else str(ex['date'])
-                    print(f"  {i}. {ex['sheet']} | Date: {date_str} | Company: {ex['company']}")
-                    print(f"     Period 1223 value: {ex['value_1223']}")
-                    print(f"     All other periods ({', '.join(ex['other_periods'])}) value: {ex['value_others']}")
-
-            print(f"{'='*70}")
-
-        print(f"\n{'='*80}\n")
-
-    def export_conflicts_to_excel(self):
-        """
-        Export all conflicts to an Excel file with company codes and periods in columns
-        """
-        if not self.all_conflicts:
-            print(f"\n  No conflicts to export")
-            return
-
-        print(f"\n{'='*80}")
-        print("Exporting Conflicts to Excel")
-        print(f"{'='*80}")
-
-        # Create a consolidated conflicts dataframe
-        all_conflict_rows = []
-        conflicts_without_1223_rows = []
-
-        for sheet_name, conflicts in self.all_conflicts.items():
-            for conflict in conflicts:
-                date = conflict['Date']
-                company_code = conflict['Company Code']
-                period_values = conflict['Period Values']
-
-                # Create a row with Date as first column
-                row = {
-                    'Date': date,
-                    'Sheet': sheet_name
-                }
-
-                # Add columns for each period with format "CompanyCode (Period)"
-                for period, value in period_values.items():
-                    col_name = f"{company_code} ({period})"
-                    row[col_name] = value
-
-                all_conflict_rows.append(row)
-
-                # Check if 1223 is NOT involved in this conflict
-                if '1223' not in period_values:
-                    conflicts_without_1223_rows.append(row)
-
-        if not all_conflict_rows:
-            print(f"  No conflict rows to export")
-            return
-
-        # Create DataFrame for all conflicts
-        conflicts_df = pd.DataFrame(all_conflict_rows)
-
-        # Fill NaN with empty string for better readability
-        conflicts_df = conflicts_df.fillna('')
-
-        # Sort by Date and Sheet
-        conflicts_df = conflicts_df.sort_values(['Sheet', 'Date']).reset_index(drop=True)
-
-        # Save to Excel - All conflicts
-        conflicts_file = self.output_dir / "conflicts_report.xlsx"
-
-        with pd.ExcelWriter(conflicts_file, engine='openpyxl') as writer:
-            conflicts_df.to_excel(writer, sheet_name='All Conflicts', index=False)
-
-            # Also create separate sheets for each data type
-            for sheet_name in self.all_conflicts.keys():
-                sheet_conflicts = conflicts_df[conflicts_df['Sheet'] == sheet_name].copy()
-                sheet_conflicts = sheet_conflicts.drop(columns=['Sheet'])
-
-                # Truncate sheet name if too long (Excel limit is 31 chars)
-                excel_sheet_name = sheet_name[:31] if len(sheet_name) > 31 else sheet_name
-                sheet_conflicts.to_excel(writer, sheet_name=excel_sheet_name, index=False)
-
-        print(f"  All conflicts exported to: {conflicts_file}")
-        print(f"  Total conflicts: {len(conflicts_df)}")
-        print(f"  Sheets with conflicts: {', '.join(self.all_conflicts.keys())}")
-
-        # Export conflicts WITHOUT 1223
-        if conflicts_without_1223_rows:
-            conflicts_no_1223_df = pd.DataFrame(conflicts_without_1223_rows)
-            conflicts_no_1223_df = conflicts_no_1223_df.fillna('')
-            conflicts_no_1223_df = conflicts_no_1223_df.sort_values(['Sheet', 'Date']).reset_index(drop=True)
-
-            conflicts_no_1223_file = self.output_dir / "conflicts_excluding_1223.xlsx"
-
-            with pd.ExcelWriter(conflicts_no_1223_file, engine='openpyxl') as writer:
-                conflicts_no_1223_df.to_excel(writer, sheet_name='Conflicts Excl 1223', index=False)
-
-                # Also create separate sheets for each data type (excluding 1223)
-                for sheet_name in self.all_conflicts.keys():
-                    sheet_conflicts_no_1223 = conflicts_no_1223_df[conflicts_no_1223_df['Sheet'] == sheet_name].copy()
-
-                    if len(sheet_conflicts_no_1223) > 0:
-                        sheet_conflicts_no_1223 = sheet_conflicts_no_1223.drop(columns=['Sheet'])
-
-                        # Truncate sheet name if too long (Excel limit is 31 chars)
-                        excel_sheet_name = sheet_name[:31] if len(sheet_name) > 31 else sheet_name
-                        sheet_conflicts_no_1223.to_excel(writer, sheet_name=excel_sheet_name, index=False)
-
-            print(f"\n  Conflicts WITHOUT 1223 exported to: {conflicts_no_1223_file}")
-            print(f"  Conflicts excluding 1223: {len(conflicts_no_1223_df)}")
-            print(f"  ({len(conflicts_no_1223_df)/len(conflicts_df)*100:.1f}% of total conflicts)")
-        else:
-            print(f"\n  ✓ No conflicts found that exclude period 1223")
-            print(f"    (All conflicts involve period 1223)")
-
-        print(f"{'='*80}\n")
 
     def merge_all_data(self):
         """
@@ -574,12 +232,6 @@ class ScopeEmissionsMerger:
                 df.to_excel(output_excel)
                 print(f"  Saved to: {output_excel}")
 
-        # Analyze conflict patterns
-        self.analyze_conflict_patterns()
-
-        # Export conflicts if any were found
-        self.export_conflicts_to_excel()
-
         print(f"\n{'='*80}")
         print("Summary")
         print(f"{'='*80}")
@@ -587,29 +239,6 @@ class ScopeEmissionsMerger:
         print(f"\nMerged data files created:")
         for key in results.keys():
             print(f"  - {key}_all_periods.xlsx")
-
-        if self.all_conflicts:
-            total_conflicts = sum(len(v) for v in self.all_conflicts.values())
-
-            # Count conflicts without 1223
-            conflicts_without_1223 = 0
-            for conflicts in self.all_conflicts.values():
-                for conflict in conflicts:
-                    if '1223' not in conflict['Period Values']:
-                        conflicts_without_1223 += 1
-
-            print(f"\nConflicts reports created:")
-            print(f"  - conflicts_report.xlsx")
-            print(f"    (Contains all {total_conflicts} conflicts across {len(self.all_conflicts)} sheets)")
-
-            if conflicts_without_1223 > 0:
-                print(f"  - conflicts_excluding_1223.xlsx")
-                print(f"    (Contains {conflicts_without_1223} conflicts that do NOT involve period 1223)")
-                print(f"    ({conflicts_without_1223/total_conflicts*100:.1f}% of total conflicts)")
-            else:
-                print(f"  Note: All conflicts involve period 1223")
-        else:
-            print(f"\n✓ No conflicts found - all duplicate dates have identical values")
 
         print(f"{'='*80}\n")
 
@@ -750,6 +379,15 @@ class ScopeEmissionsMerger:
 
         Args:
             results: Dictionary with merged DataFrames (scope_1, scope_2, scope_3)
+
+        Returns:
+            Dictionary with the same keys as `results` (scope_1, scope_2, scope_3),
+            containing filled DataFrames filtered to 2020-2024. Keys for scopes
+            with no data in 2021-2023 are omitted.
+
+        Side effect:
+            Writes one Excel file per scope to `self.output_dir`:
+            {key}_all_periods_filled.xlsx
         """
         print(f"\n{'='*80}")
         print("Creating Filled Versions (Filling 2021-2023 only)")

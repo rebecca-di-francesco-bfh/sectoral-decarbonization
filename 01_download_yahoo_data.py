@@ -7,7 +7,7 @@ This script:
 3. Saves the data as adj_price_yahoo_comp_{period}.xlsx
 
 Date ranges are calculated as:
-- Start date: 2 years and 1 month before the period
+- Start date: 2 years before the period
 - End date: 4 months after the period
 """
 
@@ -45,8 +45,11 @@ class YahooDataDownloader:
     def _calculate_date_range(self):
         """
         Calculate start and end dates based on period.
-        Start: 2 years and 1 day before period
-        End: 4 months after period
+
+        Returns:
+            Tuple[str, str]: (start_date, end_date) formatted as "YYYY-MM-DD",
+                where start_date is 2 years before the period and end_date is
+                4 months after the period.
         """
         # Parse period: "1221" -> December 2021
         month = int(self.period[:2])
@@ -64,7 +67,14 @@ class YahooDataDownloader:
         return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
 
     def load_symbols(self):
-        """Load all symbols and TYPE codes from the symbol file"""
+        """Load all symbols and TYPE codes from the symbol file.
+
+        Returns:
+            pd.DataFrame with columns:
+                - NAME: company name
+                - SYMBOL: ticker symbol (Yahoo Finance format)
+                - TYPE: LSEG internal type code
+        """
 
         type_lseg = pd.read_excel(self.symbol_file, sheet_name="SYMBOL", dtype=str).iloc[0].values[1:]
         symbol_lseg = pd.read_excel(self.symbol_file, sheet_name="SYMBOL", dtype=str, header=2)
@@ -80,7 +90,14 @@ class YahooDataDownloader:
 
 
     def calculate_adjusted_prices_from_lseg(self, symbol_type_map):
-        """Calculate adjusted prices from LSEG close prices and dividends"""
+        """Calculate adjusted prices from LSEG close prices and dividends.
+
+        Args:
+            symbol_type_map: DataFrame with columns NAME, SYMBOL, TYPE (from load_symbols).
+
+        Returns:
+            pd.DataFrame of adjusted close prices indexed by date, columns are ticker symbols.
+        """
 
         # Load price, dividend rate, and dividend date data
         price = pd.read_excel(self.price_file, sheet_name='CLOSE PRICE', header=4)
@@ -148,7 +165,15 @@ class YahooDataDownloader:
         return adj_close_lseg
 
     def download_all_from_yahoo(self, symbol_type_map):
-        """Download all symbols from Yahoo Finance"""
+        """Download all symbols from Yahoo Finance.
+
+        Args:
+            symbol_type_map: DataFrame with columns NAME, SYMBOL, TYPE (from load_symbols).
+
+        Returns:
+            pd.DataFrame of adjusted close prices indexed by date, columns are ticker symbols.
+            Symbols with no valid data are excluded.
+        """
    
         all_symbols = symbol_type_map['SYMBOL'].tolist()
  
@@ -191,7 +216,15 @@ class YahooDataDownloader:
         return adj_close_yahoo
 
     def check_nans(self, adj_close_data):
-        """Check for NaN values in the adjusted close data"""
+        """Check for NaN values in the adjusted close data.
+
+        Args:
+            adj_close_data: DataFrame of adjusted close prices.
+
+        Side effect:
+            If NaN values are found, writes a per-symbol summary to
+            data/tests/stocks_with_missing_prices/stocks_with_missing_prices_{period}.xlsx.
+        """
         if adj_close_data is None or adj_close_data.empty:
             return
 
@@ -227,7 +260,12 @@ class YahooDataDownloader:
 
 
     def save_data(self, adj_close_data):
-        """Save the adjusted close data to Excel"""
+        """Save the adjusted close data to Excel.
+
+        Args:
+            adj_close_data: DataFrame of adjusted close prices to save.
+                Also runs check_nans before saving.
+        """
         if adj_close_data is None or adj_close_data.empty:
             print("  No data to save")
             return

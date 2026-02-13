@@ -1,5 +1,5 @@
 """
-Optimal Portfolio Creation for Carbon Reduction with Tracking Error Constraints
+Optimal portfolio creation for carbon reduction with Tracking Error constraints
 
 This script performs portfolio optimization across different sectors to minimize carbon
 intensity while constraining tracking error relative to a benchmark. It generates an
@@ -69,6 +69,7 @@ def run_sector_optimisation(sector_name, sector, R, cov_type="raw", cache_dir="c
     assert np.isclose(w_bench.sum(), 1.0), "Benchmark weights must sum to 1"
     assert not np.isnan(c_vec).any(), "Carbon intensity values cannot be NaN"
     
+    # Exclude the last 3 months reserved for out-of-sample testing
     R = R.iloc[:-3]
     # Clean returns data (remove Date column and any rows with NaN)
     R_clean = R.drop(columns=['Date']).dropna()
@@ -125,7 +126,7 @@ def run_sector_optimisation(sector_name, sector, R, cov_type="raw", cache_dir="c
         # Objective: Minimize portfolio carbon intensity
         prob = cp.Problem(cp.Minimize(c_vec @ w), constraints)
 
-     # Solve with MOSEK
+        # Solve with MOSEK
         prob.solve(solver=cp.MOSEK, verbose=False)
 
         # Check status

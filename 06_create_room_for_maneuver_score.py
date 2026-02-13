@@ -24,6 +24,18 @@ from plot_functions import plot_sector_evolution
 from scipy.stats import spearmanr
 
 def minmax_within_period(x):
+    """
+    Min-max normalize a pandas Series within a single period group.
+
+    Intended for use with groupby().transform(). If all values are equal or
+    all NaN, returns 0.5 for all elements (neutral mid-point).
+
+    Args:
+        x: pandas Series of numeric values for one period
+
+    Returns:
+        Normalized Series in [0, 1] (or 0.5 if normalization is not possible)
+    """
     x = pd.to_numeric(x, errors="coerce")
     lo, hi = np.nanmin(x), np.nanmax(x)
     if not np.isfinite(lo) or not np.isfinite(hi) or hi == lo:
@@ -116,33 +128,6 @@ def _prep_frontier(te_bps, cuts_pct):
 
     return uniq_te, np.array(uniq_c)
 
-def _elasticity_te_min_to_2pct(te_grid, c_grid):
-    """
-    Elasticity between TE_min and 2% TE.
-    
-    Elasticity = (ΔC / ΔTE) * (TE_avg / C_avg)
-    where ΔC = C(2%) - C(TE_min), ΔTE = 2% - TE_min.
-    """
-    te_min = te_grid[0]
-    te_target = 0.02
-
-    if te_target <= te_min:
-        return np.nan
-
-    c_min = _interp(te_min, te_grid, c_grid)
-    c_target = _interp(te_target, te_grid, c_grid)
-
-    dC = c_target - c_min
-    dTE = te_target - te_min
-
-    if dTE <= 0 or c_min <= 0 or dC <= 0:
-        return np.nan
-
-    TE_avg = 0.5 * (te_min + te_target)
-    C_avg = 0.5 * (c_min + c_target)
-
-    return (dC / dTE) * (TE_avg / C_avg)
-
 def _auc_to(te_grid, c_grid, te_max):
     """
     Calculate the area under the efficient frontier curve up to te_max.
@@ -221,8 +206,19 @@ def _minmax(x):
 
     return (x - lo) / (hi - lo) if hi > lo else np.zeros_like(x)
 
-# within period normalization 0-1
 def norm(x):
+    """
+    Min-max normalize a pandas Series to [0, 1] within a period group.
+
+    Similar to minmax_within_period but used directly (not via transform).
+    Returns 0.5 for all elements if the range is zero.
+
+    Args:
+        x: pandas Series of numeric values
+
+    Returns:
+        Normalized Series in [0, 1]
+    """
     x = pd.to_numeric(x, errors='coerce')
     x_min, x_max = np.nanmin(x), np.nanmax(x)
     if x_max - x_min == 0:
@@ -363,7 +359,7 @@ df_norm["Period"] = pd.Categorical(
 )
 df_norm = df_norm.sort_values(["Sector", "Period"])
 
-# Plot metric 1: 
+# Plot metric 1: carbon reduction achievable at 1% TE
 plot_sector_evolution(
     df_norm,
     value_col='C_at_1pct',

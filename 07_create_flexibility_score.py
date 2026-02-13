@@ -22,16 +22,33 @@ from utils import solve_qp_with_fallback
 # CONFIGURATION
 # =============================================================================
 def minmax_norm_grouped(df, col):
+    """
+    Apply min-max normalisation to a column within each Period group.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame containing at least a 'Period' column and `col`.
+    col : str
+        Name of the column to normalise.
+
+    Returns
+    -------
+    pd.Series
+        Normalised values in [0, 1]; returns 0 when all values in a group
+        are identical (zero range).
+    """
     return df.groupby("Period")[col].transform(
         lambda x: (x - x.min()) / (x.max() - x.min()) if x.max() != x.min() else 0
     )
+
 # Optimization parameters
-EPS = 0.02
-DELTA_R = 1e-3
-DELTA_TE = 1e-8
-K_DIRS = 500
-NO_IMPROVE_PATIENCE = 40
-ZERO_TOL = 1e-10
+EPS = 0.02        # Allowed relative deviation from the optimal carbon reduction (ε-band tolerance)
+DELTA_R = 1e-3    # Tolerance around R_star when probing alternative portfolios for L2 bound
+DELTA_TE = 1e-8   # Small slack added to the TE variance cap to avoid numerical infeasibility
+K_DIRS = 500      # Number of random directions used in the L2 lower-bound search
+NO_IMPROVE_PATIENCE = 40  # Early-stop: halt L2 search after this many non-improving directions
+ZERO_TOL = 1e-10  # Weights below this threshold are treated as effectively zero
 
 # Period definitions
 PERIODS = {
@@ -105,6 +122,15 @@ def process_sector(sector_name, info, data, log_returns_all):
     # A) ε-bands computation
     # -------------------------------
     def eps_constraints(w):
+        """
+        Return the CVXPY constraint list for ε-band optimisation.
+
+        Constraints enforced:
+          1. Tracking-error variance <= monthly TE cap (2% annualised).
+          2. Portfolio weights sum to 1 (fully invested).
+          3. No short-selling (w >= 0).
+          4. Carbon reduction >= (1 - EPS) * R_star, i.e. within ε of optimal.
+        """
         return [
             cp.quad_form(w - w_bench, cp.psd_wrap(Sigma_sector)) <= te_var_monthly_cap,
             cp.sum(w) == 1,
@@ -167,7 +193,7 @@ def process_sector(sector_name, info, data, log_returns_all):
     best_lb = 0.0
     stale = 0
 
-    for it in range(K_DIRS):
+    for _ in range(K_DIRS):
         vv = rng.standard_normal(N)
         nrm = np.linalg.norm(vv)
         if nrm == 0:
@@ -301,10 +327,42 @@ def validate_data_quality(data, log_returns_all, optimal_portfolios, period_code
     return True
 
 def build_flexibility_score(df):
+    """
+    Compute a composite Flexibility Score for each sector within a single period.
+
+    The score combines two complementary measures of portfolio flexibility,
+    each normalised to [0, 1] within the period before averaging:
+
+    - **L2 lower bound** (`L2_lower_bound_same_obj`): the minimum L2 distance
+      from the optimal portfolio that any alternative portfolio achieving the
+      same carbon reduction must travel. A larger value means the optimal
+      solution is more isolated — i.e. there is *more* room to deviate from it
+      while still meeting the carbon target.
+    - **Median ε-bandwidth** (`Median_bandwidth`): the median width of the
+      allowable weight interval across all stocks in the sector. Wider bands
+      indicate that individual stock weights can vary more without breaching
+      the carbon or TE constraints.
+
+    The two components are weighted equally (50/50).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Flexibility panel for a single period, containing at least the columns
+        'L2_lower_bound_same_obj' and 'Median_bandwidth'.
+
+    Returns
+    -------
+    pd.DataFrame
+        Input DataFrame with three additional columns:
+        - 'n_L2'            : normalised L2 lower bound
+        - 'n_MedBW'         : normalised median bandwidth
+        - 'Flexibility_Score': composite score in [0, 1]
+    """
     df = df.copy()
 
-    # Normalized version (0-1 scaling within period)
     def norm(x):
+        """Min-max normalise a series, returning 0.5 when all values are equal."""
         x = pd.to_numeric(x, errors='coerce')
         x_min, x_max = np.nanmin(x), np.nanmax(x)
         if x_max - x_min == 0:
