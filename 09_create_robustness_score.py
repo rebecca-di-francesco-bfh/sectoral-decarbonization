@@ -200,9 +200,6 @@ def process_period(period):
     period : str
         Period code (e.g., '0321')
 
-    sector_annualized_volatility_by_quarter : pd.DataFrame
-        Sector volatility by quarter
-
     Returns
     -------
     pd.DataFrame or None

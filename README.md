@@ -6,7 +6,7 @@ The DRI is built from four dimensions:
 
 | Dimension | Description |
 |---|---|
-| **Room for Maneuver** | Carbon reduction potential at a given tracking error budget |
+| **Room for Maneuver** | Carbon reduction potential at a tight tracking error budget |
 | **Flexibility** | Range of near-optimal portfolios at a target tracking error |
 | **Sensitivity** | Stability of optimal portfolios under input perturbations |
 | **Robustness** | Out-of-sample tracking error relative to benchmark volatility |
@@ -29,11 +29,13 @@ sectoral-decarbonisation/
 ├── 10_create_decarbonization_readiness_score.py  # Combine into composite DRI
 ├── utils.py                           # Shared optimisation helpers
 ├── plot_functions.py                  # Shared plotting helpers
+├── requirements.txt                   # Python package dependencies
 ├── FILLING_LOGIC_README.md            # Details on emissions gap-filling logic
-├── benchmark_comparison.ipynb
-├── sector_summaries_all_periods.ipynb
-├── visualize_te_carbon_frontiers.ipynb
-├── 0623_real_estate_check/            # Diagnostic scripts for the Jun-2023 real estate period
+├── benchmark_comparison.ipynb         # Validates reconstructed sector benchmarks against official S&P total return indices
+├── sector_summaries_all_periods.ipynb # Sector-level imputation and emissions summaries across all periods
+├── visualize_te_carbon_frontiers.ipynb # Plots TE-carbon efficient frontiers and marginal gain curves
+├── dri_score_corr.ipynb               # Correlates DRI dimension scores computed with Scope 1–3 vs Scope 1–2 emissions
+├── real_estate_example_flexibility_0922_0623.py  # Diagnostic: to check why Real Estate flexibility grew between Sep-2022 and Jun-2023
 └── data/
     ├── lseg/
     │   ├── constituents_symbols/      # S&P 500 constituent symbols (per period)
@@ -43,12 +45,15 @@ sectoral-decarbonisation/
     ├── merged_scope_emissions/        # Output of step 2 (merged + filled emissions)
     ├── datasets/                      # Output of step 3 (benchmark weights + carbon)
     ├── log_returns/                   # Sector log returns (output of step 3)
+    ├── covariances/                   # Sector covariance matrices computed from monthly log returns
+    ├── benchmark_returns_volatility/  # Output of step 5: sector daily returns and annualised volatility summaries
+    ├── daily_returns_3m/              # Per-period 3-month forward daily returns (output of step 5, used for out-of-sample TE)
     ├── te-testing-results/            # Tracking error test results
     ├── stocks_with_missing_prices/    # Stocks flagged for missing price history
     ├── wiki/symbol_wiki.xlsx          # GICS sector classification from Wikipedia
     ├── gics_sector_manual_mapping.csv # Manual GICS overrides
     ├── scope_emissions_patch.csv      # Manual emissions corrections
-    └── delisted_companies_revenues.csv
+    └── delisted_companies_revenues.csv # Used to fill in the missing revenue of those companies that were delisted during the sample period and therefore did not report annual revenues in LSEG, sourced from CompaniesMarketCap.com
 ```
 
 ---
