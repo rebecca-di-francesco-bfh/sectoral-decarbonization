@@ -671,3 +671,92 @@ def plot_te_carbon_frontiers_all_periods(portfolio_dir, output_path=None):
         print(f"Figure saved to: {output_path}")
 
     return fig
+
+
+def plot_te_carbon_marginal_gains(
+    sectors_to_plot=None,
+    portfolio_dir="results/optimal_portfolios",
+    output_path="results/te_carbon_marginal_gains_last_period_academic.pdf",
+    show=True,
+):
+    """
+    Plot TE-Carbon frontier and marginal carbon gain for the latest period.
+
+    Loads the most recent pickle from `portfolio_dir` and produces a 3×2 grid:
+    left column = frontier curve, right column = marginal gain curve.
+
+    Parameters
+    ----------
+    sectors_to_plot : list of str, optional
+        Sectors to include. Defaults to
+        ["Industrials", "Communication Services", "Financials"].
+    portfolio_dir : str or Path
+        Directory containing optimal-portfolio pickle files.
+    output_path : str or None
+        Path to save the figure as PDF. Pass None to skip saving.
+    show : bool
+        Whether to call plt.show(). Set False when running headlessly.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    """
+    import pickle
+    from pathlib import Path
+
+    if sectors_to_plot is None:
+        sectors_to_plot = ["Industrials", "Communication Services", "Financials"]
+
+    # Load latest period
+    last_pickle = sorted(Path(portfolio_dir).glob("optimal_portfolios_all_te_*.pkl"))[-1]
+    with open(last_pickle, "rb") as f:
+        last_period = pickle.load(f)
+
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.size": 11,
+        "axes.edgecolor": "black",
+        "axes.linewidth": 1.0,
+        "grid.color": "gray",
+        "grid.linestyle": "--",
+        "grid.alpha": 0.25,
+    })
+
+    fig, axes = plt.subplots(len(sectors_to_plot), 2, figsize=(11, 10))
+
+    for row, sector in enumerate(sectors_to_plot):
+        data = last_period[sector]
+        te = np.array(data["tracking_errors"])
+        cr = np.array(data["carbon_reductions"])
+
+        # Frontier
+        ax_frontier = axes[row, 0]
+        ax_frontier.plot(te, cr, "-", lw=2.0, color="#1f77b4")
+        ax_frontier.set_title(f"{sector} — Frontier", fontsize=12)
+        ax_frontier.set_xlabel("Tracking Error (bps)")
+        ax_frontier.set_ylabel("Carbon Reduction (%)")
+        ax_frontier.set_ylim(0, 102)
+        ax_frontier.grid(True)
+
+        # Marginal gains
+        marginal = np.gradient(cr, te)
+        ax_marg = axes[row, 1]
+        ax_marg.plot(te, marginal, "-", lw=2.0, color="#2c7a2c")
+        ax_marg.axhline(0, color="black", linewidth=0.8)
+        ax_marg.set_title(f"{sector} — Marginal Carbon Gain", fontsize=12)
+        ax_marg.set_xlabel("Tracking Error (bps)")
+        ax_marg.set_ylabel(r"Marginal Gain ($\Delta CR / \Delta TE$)")
+        ax_marg.set_ylim(0, 1.6)
+        ax_marg.grid(True)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+
+    if output_path is not None:
+        fig.savefig(output_path, bbox_inches="tight")
+
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)
+
+    return fig

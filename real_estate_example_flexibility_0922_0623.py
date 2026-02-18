@@ -24,7 +24,7 @@ periods = ['0922', '0623']
 data_by_period = {}
 
 for period in periods:
-    dataset_file = f"../Data/Datasets/benchmark_weights_carbon_intensity_{period}.xlsx"
+    dataset_file = f"Data/Datasets/benchmark_weights_carbon_intensity_{period}.xlsx"
 
     try:
         df = pd.read_excel(dataset_file)
@@ -81,7 +81,7 @@ if '0922' in data_by_period and '0623' in data_by_period:
             # Get volatility data from 0922 if available
             vols_0922_dict = {}
             try:
-                returns_file_0922 = f"../Data/log_returns/sector_log_returns_comp_0922.xlsx"
+                returns_file_0922 = f"Data/log_returns/sector_log_returns_comp_0922.xlsx"
                 log_returns_0922 = pd.read_excel(returns_file_0922, sheet_name='Real Estate')
                 if 'Date' in log_returns_0922.columns:
                     returns_clean_0922 = log_returns_0922.drop(columns=['Date']).dropna()
@@ -151,7 +151,7 @@ if '0922' in data_by_period and '0623' in data_by_period:
             # Get volatility data from 0623 if available
             vols_0623_dict = {}
             try:
-                returns_file_0623 = f"../Data/log_returns/sector_log_returns_comp_0623.xlsx"
+                returns_file_0623 = f"Data/log_returns/sector_log_returns_comp_0623.xlsx"
                 log_returns_0623 = pd.read_excel(returns_file_0623, sheet_name='Real Estate')
                 if 'Date' in log_returns_0623.columns:
                     returns_clean_0623 = log_returns_0623.drop(columns=['Date']).dropna()
@@ -323,167 +323,4 @@ if '0922' in data_by_period and '0623' in data_by_period:
                 else:
                     print(f"  → Carbon concentration remained STABLE")
 
-        # Weight redistribution for common stocks
-        if 'weight_in_sector' in df_0922.columns and 'weight_in_sector' in df_0623.columns:
-            common_0922 = df_0922[df_0922[ticker_col].isin(common)].set_index(ticker_col)['weight_in_sector']
-            common_0623 = df_0623[df_0623[ticker_col].isin(common)].set_index(ticker_col)['weight_in_sector']
-
-            weight_changes = common_0623 - common_0922
-
-            top_gains = weight_changes.nlargest(5)
-            top_losses = weight_changes.nsmallest(5)
-
-            print(f"\n{'='*80}")
-            print("WEIGHT REDISTRIBUTION (Common Stocks)")
-            print(f"{'='*80}")
-
-            print(f"\nTop 5 weight increases (0922 → 0623):")
-            for ticker, change in top_gains.items():
-                old_w = common_0922[ticker]
-                new_w = common_0623[ticker]
-                print(f"  {ticker:10s}: {old_w:.6f} → {new_w:.6f} (Δ = +{change:.6f})")
-
-            print(f"\nTop 5 weight decreases (0922 → 0623):")
-            for ticker, change in top_losses.items():
-                old_w = common_0922[ticker]
-                new_w = common_0623[ticker]
-                print(f"  {ticker:10s}: {old_w:.6f} → {new_w:.6f} (Δ = {change:.6f})")
-
-# =============================================================================
-# PART 2: VOLATILITY CHANGES
-# =============================================================================
-
-print("\n" + "=" * 80)
-print("PART 2: VOLATILITY CHANGES")
-print("=" * 80)
-
-stock_volatilities = {}
-returns_matrices = {}
-
-for period in periods:
-    returns_file = f"../Data/log_returns/sector_log_returns_comp_{period}.xlsx"
-
-    try:
-        log_returns = pd.read_excel(returns_file, sheet_name='Real Estate')
-
-        if 'Date' in log_returns.columns:
-            returns_clean = log_returns.drop(columns=['Date']).dropna()
-        else:
-            returns_clean = log_returns.dropna()
-
-        returns_matrices[period] = returns_clean
-
-        stock_vols = returns_clean.std()
-        stock_volatilities[period] = stock_vols
-
-        print(f"\nPeriod {period}:")
-        print(f"  Shape: {returns_clean.shape[0]} observations × {returns_clean.shape[1]} stocks")
-        print(f"  Mean volatility: {stock_vols.mean():.6f}")
-        print(f"  Median volatility: {stock_vols.median():.6f}")
-        print(f"  Max volatility: {stock_vols.max():.6f}")
-        print(f"  Stocks with σ > 0.10: {(stock_vols > 0.10).sum()}/{len(stock_vols)}")
-
-    except Exception as e:
-        print(f"\nPeriod {period}: Error - {e}")
-
-# Compare volatilities
-if '0922' in stock_volatilities and '0623' in stock_volatilities:
-    vols_0922 = stock_volatilities['0922']
-    vols_0623 = stock_volatilities['0623']
-
-    common_stocks = set(vols_0922.index) & set(vols_0623.index)
-
-    vol_changes = pd.DataFrame({
-        'vol_0922': vols_0922,
-        'vol_0623': vols_0623
-    })
-    vol_changes = vol_changes.loc[list(common_stocks)].copy()
-    vol_changes['abs_change'] = vol_changes['vol_0623'] - vol_changes['vol_0922']
-    vol_changes['pct_change'] = 100 * (vol_changes['vol_0623'] - vol_changes['vol_0922']) / vol_changes['vol_0922']
-
-    print(f"\n{'='*80}")
-    print("VOLATILITY CHANGES (Common Stocks)")
-    print(f"{'='*80}")
-
-    print(f"\nTop 10 volatility DECREASES (0922 → 0623, recovery):")
-    print(f"{'Stock':<15} {'0922 σ':>12} {'0623 σ':>12} {'Change':>12} {'% Change':>12}")
-    print("-" * 70)
-
-    vol_changes_sorted = vol_changes.sort_values('abs_change')
-    for stock, row in vol_changes_sorted.head(10).iterrows():
-        print(f"{stock:<15} {row['vol_0922']:12.6f} {row['vol_0623']:12.6f} "
-              f"{row['abs_change']:+12.6f} {row['pct_change']:+11.1f}%")
-
-    print(f"\nSummary:")
-    decreased = (vol_changes['abs_change'] < 0).sum()
-    increased = (vol_changes['abs_change'] > 0).sum()
-    print(f"  Volatility decreased: {decreased}/{len(vol_changes)} stocks ({100*decreased/len(vol_changes):.1f}%)")
-    print(f"  Volatility increased: {increased}/{len(vol_changes)} stocks ({100*increased/len(vol_changes):.1f}%)")
-    print(f"  Mean change: {vol_changes['pct_change'].mean():+.1f}%")
-    print(f"  Median change: {vol_changes['pct_change'].median():+.1f}%")
-
-# =============================================================================
-# PART 3: CORRELATION CHANGES
-# =============================================================================
-
-print("\n" + "=" * 80)
-print("PART 3: CORRELATION CHANGES")
-print("=" * 80)
-
-for period in periods:
-    if period in returns_matrices:
-        corr_matrix = returns_matrices[period].corr()
-        upper_triangle = corr_matrix.where(
-            np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
-        )
-        correlations = upper_triangle.stack()
-
-        print(f"\nPeriod {period}:")
-        print(f"  Mean correlation: {correlations.mean():.4f}")
-        print(f"  Median correlation: {correlations.median():.4f}")
-        print(f"  Pairs with corr > 0.7: {(correlations > 0.7).sum()}/{len(correlations)} ({100*(correlations > 0.7).sum()/len(correlations):.1f}%)")
-
-# =============================================================================
-# PART 4: OPTIMAL PORTFOLIO DIAGNOSTICS
-# =============================================================================
-
-print("\n" + "=" * 80)
-print("PART 4: OPTIMAL PORTFOLIO DIAGNOSTICS")
-print("=" * 80)
-
-for period in periods:
-    pkl_file = f"../results/optimal_portfolios/optimal_portfolios_all_te_{period}.pkl"
-
-    try:
-        import pickle
-        with open(pkl_file, 'rb') as f:
-            portfolios = pickle.load(f)
-
-        if 'Real Estate' in portfolios:
-            fin_data = portfolios['Real Estate']
-            diag = fin_data.get('diagnostics', {})
-
-            print(f"\nPeriod {period}:")
-            print(f"  Shrinkage Alpha: {diag.get('Shrinkage Alpha', 'N/A')}")
-            print(f"  Carbon reduction @2% TE: {diag.get('Reduction @2% TE (%)', 'N/A')}")
-            print(f"  Condition number: {diag.get('Min_Eigval1', 0.0):.6f} (min eigenvalue)")
-
-    except Exception as e:
-        print(f"\nPeriod {period}: Error - {e}")
-
-print("\n" + "=" * 80)
-print("CONCLUSION: WHAT CHANGED FROM 0922 TO 0623?")
-print("=" * 80)
-print("""
-Check the results above to understand the recovery:
-
-1. STOCK COMPOSITION: Did problematic stocks exit?
-2. VOLATILITY: Did volatility normalize?
-3. CORRELATION: Did stocks become less correlated?
-4. SHRINKAGE: Did the shrinkage factor decrease?
-
-The flexibility score recovered from 1.0 (0922) to 1.0 (0623)
-by analyzing these factors.
-""")
-
-print("=" * 80)
+       
