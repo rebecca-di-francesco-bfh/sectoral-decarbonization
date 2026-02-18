@@ -183,4 +183,11 @@ pip install -r requirements.txt
 
 ---
 
+## Acknowledgments
+Funded by the European Union. Views and opinions expressed are however those of the author(s) only and do not necessarily reflect those of the European Union or European Research Executive Agency (REA). Neither the European Union nor the granting authority can be held responsible for them.
 
+## Citation
+If you use this code in academic work, please cite the associated paper.
+
+## License
+This project is licensed under the MIT License. See the LICENSE file for details.
