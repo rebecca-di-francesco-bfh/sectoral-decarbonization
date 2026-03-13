@@ -1,18 +1,11 @@
 """
 Compute final sector-level DRI scores:
 - Average per-period scores
-- Global min–max normalization
 - Combine into composite DRI
 """
-import matplotlib.pyplot as plt
 import pandas as pd
-import numpy as np
 from plot_functions import plot_sector_radar_grid, plot_all_dimension_evolution
-# =============================================================================
-# Helper: global min–max normalization
-# =============================================================================
-def minmax_norm(x):
-    return (x - x.min()) / (x.max() - x.min()) if x.max() > x.min() else 0.5
+import pickle
 
 # =============================================================================
 # 1. LOAD THE FOUR DIMENSIONS
@@ -76,40 +69,31 @@ period_order = sorted(room_df["Period"].unique())
 plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath="results/DRI/dri_dimension_evolution.pdf"
 )
 
-# =============================================================================
-# 3. GLOBAL MIN–MAX NORMALIZATION (for DRI construction)
-# =============================================================================
-
-room_avg["Room_norm"]   = minmax_norm(room_avg["Room_Avg"])
-flex_avg["Flex_norm"]   = minmax_norm(flex_avg["Flex_Avg"])
-sens_avg["Sens_norm"]   = minmax_norm(sens_avg["Sens_Avg"])
-robust_avg["Robust_norm"] = minmax_norm(robust_avg["Robust_Avg"])
-
 
 # =============================================================================
-# 4. MERGE ALL DIMENSIONS
+# 3. MERGE ALL DIMENSIONS
 # =============================================================================
 final_df = (
-    room_avg[["Sector", "Room_norm"]]
-    .merge(flex_avg[["Sector", "Flex_norm"]], on="Sector")
-    .merge(sens_avg[["Sector", "Sens_norm"]], on="Sector")
-    .merge(robust_avg[["Sector", "Robust_norm"]], on="Sector")
+    room_avg[["Sector", "Room_Avg"]]
+    .merge(flex_avg[["Sector", "Flex_Avg"]], on="Sector")
+    .merge(sens_avg[["Sector", "Sens_Avg"]], on="Sector")
+    .merge(robust_avg[["Sector", "Robust_Avg"]], on="Sector")
 )
 
 
 # =============================================================================
-# 5. COMPOSITE DECARBONIZATION READINESS INDEX (DRI)
+# 4. COMPOSITE DECARBONIZATION READINESS INDEX (DRI)
 # =============================================================================
 final_df["DRI"] = (
-    final_df["Room_norm"] +
-    final_df["Flex_norm"] +
-    final_df["Sens_norm"] +
-    final_df["Robust_norm"]
+    final_df["Room_Avg"] +
+    final_df["Flex_Avg"] +
+    final_df["Sens_Avg"] +
+    final_df["Robust_Avg"]
 ) / 4.0
 
 
 # =============================================================================
-# 6. SAVE RESULTS
+# 5. SAVE RESULTS
 # =============================================================================
 final_df.to_excel("results/DRI/decarbonization_readiness_index.xlsx", index=False)
 final_df.to_parquet("results/DRI/decarbonization_readiness_index.parquet", index=False)
@@ -118,10 +102,10 @@ print("✅ Saved DRI results to results/DRI/decarbonization_readiness_index.xlsx
 print("\n🏆 Top 5 sectors by DRI:")
 print(final_df.sort_values("DRI", ascending=False).head())
 
-cols = [  "Sens_norm",
-    "Flex_norm",
-    "Room_norm",
-    "Robust_norm"]
+cols = [  "Sens_Avg",
+    "Flex_Avg",
+    "Room_Avg",
+    "Robust_Avg"]
 
 plot_sector_radar_grid(
     df=final_df,
@@ -130,20 +114,19 @@ plot_sector_radar_grid(
     savepath="results/DRI/dri_radar_profiles.pdf"
 )
 
-import pickle
 
 # ---------------------------------------------------------
-# 7. CREATE RADAR DATA STRUCTURE FOR STREAMLIT
+# 6. CREATE RADAR DATA STRUCTURE FOR STREAMLIT
 # ---------------------------------------------------------
 
 radar_dict = {}
 
 for _, row in final_df.iterrows():
     radar_dict[row["Sector"]] = {
-        "Room for Maneuver": float(row["Room_norm"]),
-        "Flexibility": float(row["Flex_norm"]),
-        "Sensitivity": float(row["Sens_norm"]),
-        "Robustness": float(row["Robust_norm"]),
+        "Room for Maneuver": float(row["Room_Avg"]),
+        "Flexibility": float(row["Flex_Avg"]),
+        "Sensitivity": float(row["Sens_Avg"]),
+        "Robustness": float(row["Robust_Avg"]),
     }
 
 # Save pickle for the Streamlit dashboard

@@ -187,43 +187,7 @@ def _te_for_cut(te_grid, c_grid, cut_frac):
     return float(x0 + (cut_frac - y0) * (x1 - x0) / (y1 - y0))
 
 
-def _minmax(x):
-    """
-    Min-max normalization: scale values to [0, 1] range.
 
-    Args:
-        x: Array of values to normalize
-
-    Returns:
-        Normalized array, or array of NaN if normalization not possible
-    """
-    x = np.asarray(x, float)
-
-    if len(x) < 2 or np.all(~np.isfinite(x)):
-        return np.full_like(x, np.nan)
-
-    lo, hi = np.nanmin(x), np.nanmax(x)
-
-    return (x - lo) / (hi - lo) if hi > lo else np.zeros_like(x)
-
-def norm(x):
-    """
-    Min-max normalize a pandas Series to [0, 1] within a period group.
-
-    Similar to minmax_within_period but used directly (not via transform).
-    Returns 0.5 for all elements if the range is zero.
-
-    Args:
-        x: pandas Series of numeric values
-
-    Returns:
-        Normalized Series in [0, 1]
-    """
-    x = pd.to_numeric(x, errors='coerce')
-    x_min, x_max = np.nanmin(x), np.nanmax(x)
-    if x_max - x_min == 0:
-        return pd.Series(0.5, index=x.index)
-    return (x - x_min) / (x_max - x_min)
 
 # =============================================================================
 # STEP 3: COMPUTE METRICS FOR ALL SECTORS AND PERIODS
