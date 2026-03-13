@@ -426,7 +426,7 @@ def plot_robustness_metrics(robust_df_plot):
     df=robust_df_plot,
     value_col="Robustness_Ratio",
     title=None,   # <- no title in figure
-    ylabel="Robustness Ratio (Lower = More Robust)",
+    ylabel="Inverted Robustness Ratio (Higher = More Robust)",
     figsize=(12, 7),
     show=False,
     savepath="results/robustness/robustness_ratio_evolution.pdf",
