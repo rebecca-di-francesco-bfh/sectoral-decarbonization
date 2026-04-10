@@ -308,6 +308,7 @@ def process_period(period):
 
     # Raw robustness metric m^{rob}_{s,t} = TE / sigma
     merged["Robustness_Ratio"] = merged[colname] / merged[VOL_COL]
+    merged["Inverted_Robustness_Ratio"] = 1 / (1 + merged["Robustness_Ratio"])
 
     def minmax_within_period(x: pd.Series) -> pd.Series:
         lo, hi = np.nanmin(x), np.nanmax(x)
@@ -331,7 +332,7 @@ def process_period(period):
     summary_df = pd.DataFrame(summary_rows)
     summary_df.to_excel(f"results/robustness/risk_return_summary_{period}.xlsx", index=False)
 
-    return merged[['sector', 'period', colname, VOL_COL, 'Robustness_Ratio', 'Robustness_Score']]
+    return merged[['sector', 'period', colname, VOL_COL, 'Robustness_Ratio', 'Inverted_Robustness_Ratio' ,'Robustness_Score']]
 
 
 def validate_robustness_scores(robust_df):
@@ -424,7 +425,7 @@ def plot_robustness_metrics(robust_df_plot):
 
     plot_sector_evolution(
     df=robust_df_plot,
-    value_col="Robustness_Ratio",
+    value_col="Inverted_Robustness_Ratio",
     title=None,   # <- no title in figure
     ylabel="Inverted Robustness Ratio (Higher = More Robust)",
     figsize=(12, 7),
