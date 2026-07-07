@@ -34,7 +34,7 @@ class YahooDataDownloader:
         # Set up file paths
         self.symbol_file = self.data_dir / "lseg" / "constituents_symbols" / f"symbol_comp_{period}.xlsm"
         self.price_file = self.data_dir / "lseg" / "prices_dividends" / f"price_div_comp_{period}.xlsm"
-        self.output_file = self.data_dir /"tests"/ "yahoo" / f"adj_price_yahoo_comp_{period}.xlsx"
+        self.output_file = self.data_dir / "yahoo" / f"adj_price_yahoo_comp_{period}.xlsx"
 
         # Create output directory if needed
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -223,7 +223,7 @@ class YahooDataDownloader:
 
         Side effect:
             If NaN values are found, writes a per-symbol summary to
-            data/tests/stocks_with_missing_prices/stocks_with_missing_prices_{period}.xlsx.
+            data/stocks_with_missing_prices/stocks_with_missing_prices_{period}.xlsx.
         """
         if adj_close_data is None or adj_close_data.empty:
             return
@@ -255,7 +255,7 @@ class YahooDataDownloader:
 
         out = pd.DataFrame(rows)
 
-        fname = f"data/tests/stocks_with_missing_prices/stocks_with_missing_prices_{self.period}.xlsx"
+        fname = f"data/stocks_with_missing_prices/stocks_with_missing_prices_{self.period}.xlsx"
         out.to_excel(fname, index=False)
 
 
