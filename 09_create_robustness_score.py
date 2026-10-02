@@ -430,10 +430,8 @@ def plot_robustness_metrics(robust_df_plot):
     ylabel="Inverted Robustness Ratio (Higher = More Robust)",
     figsize=(12, 7),
     show=False,
-    savepath="results/robustness/robustness_ratio_evolution.pdf",
-)
+    savepath="results/robustness/robustness_ratio_evolution", formats=("pdf", "svg"))
 
-  
     # Plot 4: Robustness Score (from Robustness Ratio)
     print("Plotting Robustness Score...")
     plot_sector_evolution(

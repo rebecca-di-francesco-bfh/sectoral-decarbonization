@@ -2,95 +2,41 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import matplotlib.cm as cm
+from pathlib import Path
+import matplotlib as mpl
+import matplotlib.colors as mcolors
+import pickle
 
-def plot_sector_evolution(
-    df,
-    value_col,
-    title,
-    ylabel,
-    vol_df=None,
-    adjust_by_vol=False,
-    figsize=(10, 6),
-    show=True,            # <- optional
-    savepath=None,        # <- optional convenience
-    dpi=300               # <- optional
-):
-    df_plot = df.copy()
+def plot_sector_radar_grid(df, cols_to_norm, title, savepath=None, formats=("pdf",)):
+    """
+    Plot one radar chart per sector (sorted by DRI) in a 4x3 grid,
+    with a DRI colorbar in the first empty cell.
 
-    if adjust_by_vol and vol_df is not None:
-        df_plot = df_plot.merge(vol_df, on="Sector", how="left")
-        adjusted_col = f"{value_col}_per_Vol"
-        df_plot[adjusted_col] = df_plot[value_col] / df_plot["Sector Volatility"]
-        value_col = adjusted_col
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        One row per sector, with columns "Sector", "DRI" and cols_to_norm.
+    cols_to_norm : list of str
+        The four normalised dimension columns, in the same order as the
+        axis labels (East, North, West, South).
+    title : str
+        Figure title (currently not drawn; kept for compatibility).
+    savepath : str or Path or None
+        Base path for the saved figure. Any extension is ignored; one file
+        is written per entry in `formats`. Pass None to skip saving.
+    formats : tuple of str
+        File formats to save, e.g. ("pdf",), ("eps",) or ("pdf", "eps").
 
-    period_order = sorted(df_plot["Period"].unique())
-    df_plot["Period"] = pd.Categorical(df_plot["Period"], categories=period_order, ordered=True)
-
-    sector_colors = {
-        'Communication Services': '#E63946',
-        'Consumer Discretionary': '#F77F00',
-        'Consumer Staples': '#FCBF49',
-        'Energy': '#06FFA5',
-        'Financials': '#118AB2',
-        'Health Care': '#073B4C',
-        'Industrials': '#8B5A3C',
-        'Information Technology': '#9D4EDD',
-        'Materials': '#FF69B4',
-        'Real Estate': '#BC4749',
-        'Utilities': '#808080'
-    }
-
-    fig, ax = plt.subplots(figsize=figsize)
-
-    for sector, grp in df_plot.groupby("Sector"):
-        ax.plot(
-            grp["Period"],
-            grp[value_col],
-            marker="o",
-            label=sector,
-            color=sector_colors.get(sector, 'gray'),
-            alpha=0.85,
-            linewidth=2
-        )
-    
-    ax.set_title(title, fontsize=13, fontweight="bold")
-    ax.set_xlabel("Period (Quarter)", fontsize=11)
-    ax.set_ylabel(ylabel, fontsize=11)
-    ax.grid(alpha=0.3)
-    ax.legend(
-        bbox_to_anchor=(1.05, 1),
-        loc="upper left",
-        fontsize=8,
-        title="Sector",
-        title_fontsize=9,
-        frameon=False
-    )
-
-    fig.tight_layout()
-
-    # Save if requested
-    if savepath is not None:
-        fig.savefig(savepath, format="pdf", bbox_inches="tight")
-
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)  # avoids GUI popup / memory buildup
-
-    return fig
-
-
-def plot_sector_radar_grid(df, cols_to_norm, title, savepath=None):
-
-
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    """
     labels = [
-    "         Sensitivity\n         (Inverted)",   # East
-    "Flexibility",               # North
-    "Room for         \nManeuver         ",        # West
-    "Robustness"                 # South
-]
-
-  
+        "         Sensitivity\n         (Inverted)",   # East
+        "Flexibility",                                 # North
+        "Room for         \nManeuver         ",        # West
+        "Robustness"                                   # South
+    ]
 
     print("\n=== AXIS CHECK ===")
     for label, col in zip(labels, cols_to_norm):
@@ -111,15 +57,18 @@ def plot_sector_radar_grid(df, cols_to_norm, title, savepath=None):
     ncols = 3
     nrows = 4
 
+    # Styling without transparency, so PDF and EPS look identical
     plt.rcParams.update({
-    "font.family": "serif",
-    "font.size": 11,
-    "axes.edgecolor": "black",
-    "axes.linewidth": 1.0,
-    "grid.color": "gray",
-    "grid.linestyle": "--",
-    "grid.alpha": 0.25,
-})
+        "font.family": "serif",
+        "font.size": 11,
+        "axes.edgecolor": "black",
+        "axes.linewidth": 1.0,
+        "grid.color": "#C8C8C8",
+        "grid.linestyle": "--",
+        "ps.fonttype": 42,         # embed fonts as real text in EPS
+        "pdf.fonttype": 42,        # same for PDF
+    })
+
     fig, axes = plt.subplots(
         nrows=nrows,
         ncols=ncols,
@@ -128,8 +77,18 @@ def plot_sector_radar_grid(df, cols_to_norm, title, savepath=None):
     )
     axes = axes.flatten()
 
-    # Colormap for DRI-based intensity
-    cmap = cm.get_cmap("Blues")   # Stronger = darker
+    # Colormap and normalisation for DRI-based intensity.
+    # The SAME norm is used for the radar colours and the colorbar,
+    # so the colorbar always matches the plotted colours.
+    cmap = mpl.colormaps["Blues"]           # stronger = darker
+    norm = mcolors.Normalize(vmin=0, vmax=1)
+
+    def _lighten(color, opacity=0.25):
+        """Blend a colour with white to mimic alpha=opacity without transparency."""
+        r, g, b = mcolors.to_rgb(color)
+        return (1 - opacity + opacity * r,
+                1 - opacity + opacity * g,
+                1 - opacity + opacity * b)
 
     # --- Plot ---
     for i, (_, row) in enumerate(df_sorted.iterrows()):
@@ -139,12 +98,12 @@ def plot_sector_radar_grid(df, cols_to_norm, title, savepath=None):
         values = row[cols_to_norm].tolist()
         values += values[:1]
 
-        # Color based on DRI (0 → light, 1 → dark)
-        color = cmap(row["DRI"])
+        # Color based on DRI
+        color = cmap(norm(row["DRI"]))
 
-        # Plot + fill
-        ax.plot(angles, values, color=color, linewidth=2)
-        ax.fill(angles, values, color=color, alpha=0.25)
+        # Fill first (light, opaque), then the outline on top
+        ax.fill(angles, values, color=_lighten(color), zorder=1)
+        ax.plot(angles, values, color=color, linewidth=2, zorder=2)
 
         # Axes
         ax.set_xticks(angles[:-1])
@@ -164,31 +123,17 @@ def plot_sector_radar_grid(df, cols_to_norm, title, savepath=None):
             y=1.12
         )
 
-    # # Remove unused subplots
-    # for j in range(i + 1, len(axes)):
-    #     fig.delaxes(axes[j])
-
-        # Remove unused subplots
-    for j in range(i + 1, len(axes)):
-        fig.delaxes(axes[j])
-
     # ----------------------------------------------------------------------
-    # Add colorbar in the empty subplot (Option C)
+    # Colorbar in the first empty cell; remove any other unused cells
     # ----------------------------------------------------------------------
     if len(axes) > n_sectors:
-        cbar_ax = axes[n_sectors]     # use the first empty cell
+        cbar_ax = axes[n_sectors]
+        cbar_ax.set_axis_off()             # hide the polar frame
 
-        # Create fake scalar mappable for the colorbar
-        norm = plt.Normalize(vmin=df_sorted["DRI"].min(), vmax=df_sorted["DRI"].max())
-        cmap = plt.cm.Blues
         sm = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
         sm.set_array([])
 
-        # Remove polar frame
-        cbar_ax.set_axis_off()
-
-        # Add the colorbar
-        cbar = plt.colorbar(
+        cbar = fig.colorbar(
             sm,
             ax=cbar_ax,
             fraction=0.8,
@@ -197,109 +142,256 @@ def plot_sector_radar_grid(df, cols_to_norm, title, savepath=None):
         cbar.ax.set_title("DRI", fontsize=9, pad=6)
         cbar.ax.tick_params(labelsize=7)
 
-
-    # Title & spacing
-    # plt.suptitle(title, fontsize=14, fontweight="bold", y=1.02)
+    for j in range(n_sectors + 1, len(axes)):
+        fig.delaxes(axes[j])
 
     # Reduced padding (vertical & horizontal)
     plt.tight_layout(h_pad=2, w_pad=1)
-    #fig.subplots_adjust(hspace=0.25)
 
-    # Save
+    # Save one file per requested format
     if savepath is not None:
-        fig.savefig(savepath, dpi=300, bbox_inches="tight")
+        base = Path(savepath).with_suffix("")
+        for ext in formats:
+            out = base.with_suffix(f".{ext}")
+            # dpi only matters for raster formats such as png
+            fig.savefig(out, bbox_inches="tight", format=ext, dpi=600)
+            print(f"Figure saved to: {out}")
 
     plt.show()
     return fig
 
+def plot_sector_evolution(
+    df,
+    value_col,
+    title,
+    ylabel,
+    vol_df=None,
+    adjust_by_vol=False,
+    figsize=(10, 6),
+    show=True,
+    savepath=None,
+    formats=("pdf",),
+    dpi=600,
+):
+    """
+    Plot the evolution of a score over time, one line per sector.
+ 
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        Columns "Period", "Sector" and `value_col`.
+    value_col : str
+        Column to plot.
+    title, ylabel : str
+        Plot title and y-axis label.
+    vol_df : pandas.DataFrame, optional
+        Columns "Sector" and "Sector Volatility"; used if adjust_by_vol=True.
+    adjust_by_vol : bool
+        If True, plot value_col divided by sector volatility.
+    figsize : tuple
+        Figure size in inches.
+    show : bool
+        Whether to call plt.show(). Set False when running headlessly.
+    savepath : str or Path or None
+        Base path for the saved figure. Any extension is ignored; one file
+        is written per entry in `formats`. Pass None to skip saving.
+    formats : tuple of str
+        File formats to save, e.g. ("pdf",), ("eps",) or ("pdf", "eps").
+    dpi : int
+        Resolution for raster formats such as png (ignored for pdf/eps/svg).
+ 
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    """
+    df_plot = df.copy()
+ 
+    if adjust_by_vol and vol_df is not None:
+        df_plot = df_plot.merge(vol_df, on="Sector", how="left")
+        adjusted_col = f"{value_col}_per_Vol"
+        df_plot[adjusted_col] = df_plot[value_col] / df_plot["Sector Volatility"]
+        value_col = adjusted_col
+ 
+    # Sort rows chronologically. Matplotlib orders a text x-axis by the order
+    # in which values first appear, so the rows themselves must be in order.
+    def _chrono_key(period):
+        p = str(period)
+        if p.isdigit() and len(p) <= 4:        # MMYY, e.g. "0621" or 621
+            p = p.zfill(4)
+            return (0, int(p[2:]), int(p[:2]))  # year first, then month
+        return (1, p, 0)                        # any other format: plain sort
+ 
+    df_plot["_key"] = df_plot["Period"].apply(_chrono_key)
+    df_plot = df_plot.sort_values("_key")
+    df_plot["Period"] = df_plot["Period"].astype(str)
+ 
+    sector_colors = {
+        'Communication Services': '#E63946',
+        'Consumer Discretionary': '#F77F00',
+        'Consumer Staples': '#FCBF49',
+        'Energy': '#06FFA5',
+        'Financials': '#118AB2',
+        'Health Care': '#073B4C',
+        'Industrials': '#8B5A3C',
+        'Information Technology': '#9D4EDD',
+        'Materials': '#FF69B4',
+        'Real Estate': '#BC4749',
+        'Utilities': '#808080'
+    }
+ 
+    # Styling without transparency, so PDF and EPS look identical
+    plt.rcParams.update({
+        "font.family": "serif",
+        "font.size": 11,
+        "axes.edgecolor": "black",
+        "axes.linewidth": 1.0,
+        "grid.color": "#C8C8C8",
+        "grid.linestyle": "--",
+        "grid.linewidth": 1.0,
+        "ps.fonttype": 42,         # embed fonts as real text in EPS
+        "pdf.fonttype": 42,        # same for PDF
+    })
+ 
+    fig, ax = plt.subplots(figsize=figsize)
+ 
+    for sector, grp in df_plot.groupby("Sector"):
+        ax.plot(
+            grp["Period"],
+            grp[value_col],
+            marker="o",
+            label=sector,
+            color=sector_colors.get(sector, 'gray'),
+            linewidth=2
+        )
+ 
+    ax.set_title(title, fontsize=13, fontweight="bold")
+    ax.set_xlabel("Period (Quarter)", fontsize=11)
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.grid(True)
+    ax.legend(
+        bbox_to_anchor=(1.05, 1),
+        loc="upper left",
+        fontsize=8,
+        title="Sector",
+        title_fontsize=9,
+        frameon=False
+    )
+ 
+    fig.tight_layout()
+ 
+    # Save one file per requested format
+    if savepath is not None:
+        base = Path(savepath).with_suffix("")
+        for ext in formats:
+            out = base.with_suffix(f".{ext}")
+            fig.savefig(out, bbox_inches="tight", format=ext, dpi=dpi)
+            print(f"Figure saved to: {out}")
+ 
+    if show:
+        plt.show()
+    else:
+        plt.close(fig)  # avoids GUI popup / memory buildup
+ 
+    return fig
 
-def plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath):
+def plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath,
+                                 formats=("pdf",)):
     """
     Plot the evolution of the four DRI dimensions over time
-    in a single figure with 4 horizontal subplots.
-    """
+    in a single figure with a 2x2 grid of subplots.
 
+    Parameters
+    ----------
+    room_df, flex_df, sens_df, robust_df : pandas.DataFrame
+        One DataFrame per dimension, each with columns "Period", "Sector"
+        and the corresponding score column.
+    savepath : str or Path or None
+        Base path for the saved figure. Any extension is ignored; one file
+        is written per entry in `formats`. Pass None to skip saving.
+    formats : tuple of str
+        File formats to save, e.g. ("pdf",), ("eps",) or ("pdf", "eps").
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    """
     sector_colors = {
-    'Communication Services': '#E63946',      # Red
-    'Consumer Discretionary': '#F77F00',      # Orange
-    'Consumer Staples': '#FCBF49',            # Yellow
-    'Energy': '#06FFA5',                      # Mint Green
-    'Financials': '#118AB2',                  # Blue
-    'Health Care': '#073B4C',                 # Dark Blue
-    'Industrials': '#8B5A3C',                 # Brown
-    'Information Technology': '#9D4EDD',      # Purple
-    'Materials': '#FF69B4',                   # Pink
-    'Real Estate': '#BC4749',                 # Burgundy
-    'Utilities': '#808080'                    # Gray
+        'Communication Services': '#E63946',      # Red
+        'Consumer Discretionary': '#F77F00',      # Orange
+        'Consumer Staples': '#FCBF49',            # Yellow
+        'Energy': '#06FFA5',                      # Mint Green
+        'Financials': '#118AB2',                  # Blue
+        'Health Care': '#073B4C',                 # Dark Blue
+        'Industrials': '#8B5A3C',                 # Brown
+        'Information Technology': '#9D4EDD',      # Purple
+        'Materials': '#FF69B4',                   # Pink
+        'Real Estate': '#BC4749',                 # Burgundy
+        'Utilities': '#808080'                    # Gray
     }
 
-
+    # Styling without transparency, so PDF and EPS look identical
     plt.rcParams.update({
-    "font.family": "serif",
-    "font.size": 11,
-    "axes.edgecolor": "black",
-    "axes.linewidth": 1.0,
-    "grid.color": "gray",
-    "grid.linestyle": "--",
-    "grid.alpha": 0.25,
-})
-    def _prep_periods(df, period_col="Period"):
-        order = sorted(df[period_col].unique())
-        df = df.copy()
-        df[period_col] = pd.Categorical(df[period_col], categories=order, ordered=True)
-        return df
+        "font.family": "serif",
+        "font.size": 11,
+        "axes.edgecolor": "black",
+        "axes.linewidth": 1.0,
+        "grid.color": "#C8C8C8",
+        "grid.linestyle": "--",
+        "grid.linewidth": 1.0,
+        "legend.framealpha": 1.0,  # opaque legend box (EPS has no transparency)
+        "ps.fonttype": 42,         # embed fonts as real text in EPS
+        "pdf.fonttype": 42,        # same for PDF
+    })
 
-    # Ensure periods are ordered
-    room_df_p   = _prep_periods(room_df)
-    flex_df_p   = _prep_periods(flex_df)
-    sens_df_p   = _prep_periods(sens_df)
-    robust_df_p = _prep_periods(robust_df)
-
-    # Create 4 subplots horizontally
-    fig, axes = plt.subplots(
-        nrows=2, ncols=2,
-        figsize=(12, 8),
-        sharex=True
-    )
+    def _chrono_key(period):
+        """'0621' -> (21, 6), so periods sort by year first, then month."""
+        return (int(period[2:]), int(period[:2]))
 
     def _plot_dimension(ax, df_dim, value_col, title, ylabel):
 
         df_dim = df_dim.copy()
 
-        # Format periods: 0621 → 06/21
+        # Normalise periods to 4-digit MMYY strings (e.g. 621 -> "0621")
         df_dim["Period"] = df_dim["Period"].astype(str).str.zfill(4)
+
+        # Sort rows chronologically (year, then month) before plotting,
+        # so the x-axis runs 03/21, 06/21, ..., 12/23
+        df_dim["_key"] = df_dim["Period"].apply(_chrono_key)
+        df_dim = df_dim.sort_values("_key")
+
+        # Format periods: 0621 -> 06/21
         df_dim["Period"] = df_dim["Period"].apply(lambda x: f"{x[:2]}/{x[2:]}")
 
-        # Order periods
-        period_order = sorted(df_dim["Period"].unique())
-        df_dim["Period"] = pd.Categorical(df_dim["Period"], categories=period_order, ordered=True)
-
         # Plot
-        for sector, grp in df_dim.groupby("Sector"):
+        for sector, grp in df_dim.groupby("Sector", sort=False):
             ax.plot(
                 grp["Period"],
                 grp[value_col],
                 marker="o",
                 linewidth=2,
                 label=sector,
-                alpha=0.85,
                 color=sector_colors.get(sector, "gray"),
             )
 
         ax.set_title(title, fontsize=12, fontweight="bold")
         ax.set_xlabel("Period")
         ax.set_ylabel(ylabel)
-        ax.grid(alpha=0.3)
+        ax.grid(True)
 
-        # ---- rotate xtick labels slightly ----
+        # Rotate x tick labels slightly
         ax.tick_params(axis="x", rotation=30)
 
+    # Create 2x2 subplots
+    fig, axes = plt.subplots(
+        nrows=2, ncols=2,
+        figsize=(12, 8),
+        sharex=True
+    )
 
-  
     # ---- Plot each dimension ----
     _plot_dimension(
-        axes[0,0],
-        room_df_p,
+        axes[0, 0],
+        room_df,
         value_col="Room_for_Maneuver_Score",
         title="Room for Maneuver",
         ylabel="Score"
@@ -307,30 +399,30 @@ def plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath)
 
     _plot_dimension(
         axes[0, 1],
-        flex_df_p,
+        flex_df,
         value_col="Flexibility_Score",
         title="Flexibility",
         ylabel="Score"
     )
 
     _plot_dimension(
-         axes[1, 0],
-        sens_df_p,
+        axes[1, 0],
+        sens_df,
         value_col="Sensitivity_Score",
         title="Sensitivity (Inverted)",
         ylabel="Score"
     )
 
     _plot_dimension(
-        axes[1,1],
-        robust_df_p,
+        axes[1, 1],
+        robust_df,
         value_col="Robustness_Score",
         title="Robustness",
         ylabel="Score"
     )
 
     # ---- Single centered legend below all subplots ----
-    handles, labels = axes[1,1].get_legend_handles_labels()
+    handles, labels = axes[1, 1].get_legend_handles_labels()
 
     fig.legend(
         handles,
@@ -339,20 +431,26 @@ def plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath)
         fontsize=8,
         title_fontsize=9,
         loc="lower center",
-        ncol=6,                    # all sectors in one line (adjust if needed)
-        bbox_to_anchor=(0.5, -0.003),   # center, slightly below the figure
+        ncol=6,
+        bbox_to_anchor=(0.5, -0.003),
     )
-
 
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.17)   # give space for the legend
 
+    # Save one file per requested format
     if savepath is not None:
-        fig.savefig(savepath, dpi=300, bbox_inches="tight")
+        base = Path(savepath).with_suffix("")
+        for ext in formats:
+            out = base.with_suffix(f".{ext}")
+            # dpi only matters for raster formats such as png
+            fig.savefig(out, bbox_inches="tight", format=ext, dpi=600)
+            print(f"Figure saved to: {out}")
+
     plt.show()
 
-
     return fig
+
 
 def extract_period_key(p):
     tag = p.stem.split("_")[-1]   # e.g. "0621"
@@ -361,33 +459,34 @@ def extract_period_key(p):
     return (year, month)
 
 
-
-def plot_te_carbon_frontiers_all_periods(portfolio_dir, output_path=None):
+def plot_te_carbon_frontiers_all_periods(portfolio_dir, output_path=None, formats=("pdf",)):
     """
     Plot TE-Carbon frontiers for all periods in a 6x2 subplot grid.
-
+ 
     Parameters
     ----------
     portfolio_dir : str or Path
         Directory containing pickle files with optimal portfolios
-    output_path : str, optional
-        Path to save the figure as PDF. If None, doesn't save.
-
+    output_path : str or Path, optional
+        Base path for the saved figure. Any extension is ignored; one file
+        is written per entry in `formats`. If None, doesn't save.
+    formats : tuple of str
+        File formats to save, e.g. ("pdf",), ("eps",), ("svg",)
+        or ("pdf", "eps", "svg").
+ 
     Returns
     -------
     fig : matplotlib.figure.Figure
         The generated figure
     """
-    from pathlib import Path
-    import pickle
-    
     portfolio_dir = Path(portfolio_dir)
-
+ 
     # Sort pickle files chronologically by period tag
     pickle_files = sorted(
-    portfolio_dir.glob("optimal_portfolios_all_te_*.pkl"),
-    key=extract_period_key
-    )   
+        portfolio_dir.glob("optimal_portfolios_all_te_*.pkl"),
+        key=extract_period_key
+    )
+ 
     # Custom sector order
     ordered_sectors = [
         "Industrials",
@@ -402,89 +501,97 @@ def plot_te_carbon_frontiers_all_periods(portfolio_dir, output_path=None):
         "Utilities",
         "Communication Services"
     ]
-
+ 
     # Sector colors - highly distinguishable on white background
     sector_colors = {
-    'Communication Services': '#E63946',      # Red
-    'Consumer Discretionary': '#F77F00',      # Orange
-    'Consumer Staples': '#FCBF49',            # Yellow
-    'Energy': '#06FFA5',                      # Mint Green
-    'Financials': '#118AB2',                  # Blue
-    'Health Care': '#073B4C',                 # Dark Blue
-    'Industrials': '#8B5A3C',                 # Brown
-    'Information Technology': '#9D4EDD',      # Purple
-    'Materials': '#FF69B4',                   # Pink
-    'Real Estate': '#BC4749',                 # Burgundy
-    'Utilities': '#808080'                    # Gray
-}
-
+        'Communication Services': '#E63946',      # Red
+        'Consumer Discretionary': '#F77F00',      # Orange
+        'Consumer Staples': '#FCBF49',            # Yellow
+        'Energy': '#06FFA5',                      # Mint Green
+        'Financials': '#118AB2',                  # Blue
+        'Health Care': '#073B4C',                 # Dark Blue
+        'Industrials': '#8B5A3C',                 # Brown
+        'Information Technology': '#9D4EDD',      # Purple
+        'Materials': '#FF69B4',                   # Pink
+        'Real Estate': '#BC4749',                 # Burgundy
+        'Utilities': '#808080'                    # Gray
+    }
+ 
+    # Styling without transparency, so PDF, EPS and SVG look identical
     plt.rcParams.update({
-    "font.family": "serif",
-    "font.size": 11,
-    "axes.edgecolor": "black",
-    "axes.linewidth": 1.0,
-    "grid.color": "gray",
-    "grid.linestyle": "--",
-    "grid.alpha": 0.25,
-})
-
+        "font.family": "serif",
+        "font.size": 11,
+        "axes.edgecolor": "black",
+        "axes.linewidth": 1.0,
+        "grid.color": "#C8C8C8",
+        "grid.linestyle": "--",
+        "grid.linewidth": 1.0,
+        "legend.framealpha": 1.0,  # opaque legend box (EPS has no transparency)
+        "ps.fonttype": 42,         # embed fonts as real text in EPS
+        "pdf.fonttype": 42,        # same for PDF
+    })
+ 
     # Create 6x2 subplots
     fig, axes = plt.subplots(6, 2, figsize=(16, 24))
     axes = axes.flatten()
-
+ 
     # Plot each pickle file in a subplot
     for idx, pickle_file in enumerate(pickle_files):
         with open(pickle_file, "rb") as f:
             sector_weights = pickle.load(f)
-
+ 
         # Extract period from filename (e.g., "1223" from "optimal_portfolios_all_te_1223.pkl")
         period = pickle_file.stem.split("_")[-1]
         # Format period with slash (e.g., "0621" -> "06/21")
         formatted_period = f"{period[:2]}/{period[2:]}"
-
+ 
         ax = axes[idx]
-
+ 
         for sector_name in ordered_sectors:
             if sector_name in sector_weights:
                 metrics = sector_weights[sector_name]
                 ax.plot(metrics['tracking_errors'], metrics['carbon_reductions'],
-                       label=sector_name, color=sector_colors[sector_name])
-
+                        label=sector_name, color=sector_colors[sector_name])
+ 
         ax.set_xlabel('Tracking Error (bps)')
         ax.set_ylabel('Carbon Reduction (%)')
         ax.set_title(f'Period {formatted_period}')
         ax.grid(True)
-
+ 
     # Hide any unused subplots
     for idx in range(len(pickle_files), len(axes)):
         axes[idx].set_visible(False)
-
+ 
     # Create single legend below the subplots
     handles, labels = axes[0].get_legend_handles_labels()
-    fig.legend(handles, labels, title="Sectors", loc='lower center', ncol=6, bbox_to_anchor=(0.5, -0.02))
-
+    fig.legend(handles, labels, title="Sectors", loc='lower center', ncol=6,
+               bbox_to_anchor=(0.5, -0.02))
+ 
     plt.tight_layout()
     plt.subplots_adjust(bottom=0.05)  # Make room for the legend
-
-    # Save as high-quality PDF for LaTeX/Overleaf
+ 
+    # Save one file per requested format
     if output_path is not None:
-        plt.savefig(output_path, dpi=300, bbox_inches='tight', format='pdf')
-        print(f"Figure saved to: {output_path}")
-
+        base = Path(output_path).with_suffix("")
+        for ext in formats:
+            out = base.with_suffix(f".{ext}")
+            fig.savefig(out, bbox_inches="tight", format=ext)
+            print(f"Figure saved to: {out}")
+ 
     return fig
-
-
 def plot_te_carbon_marginal_gains(
     sectors_to_plot=None,
     portfolio_dir="results/optimal_portfolios",
-    output_path="results/te_carbon_marginal_gains_last_period_academic.pdf",
+    output_path="results/te_carbon_marginal_gains_last_period_academic",
+    formats=("pdf",),
     show=True,
 ):
     """
     Plot TE-Carbon frontier and marginal carbon gain for the latest period.
 
-    Loads the most recent pickle from `portfolio_dir` and produces a 3×2 grid:
-    left column = frontier curve, right column = marginal gain curve.
+    Loads the most recent pickle from `portfolio_dir` and produces a grid
+    with one row per sector: left column = frontier curve,
+    right column = marginal gain curve.
 
     Parameters
     ----------
@@ -493,8 +600,11 @@ def plot_te_carbon_marginal_gains(
         ["Industrials", "Communication Services", "Financials"].
     portfolio_dir : str or Path
         Directory containing optimal-portfolio pickle files.
-    output_path : str or None
-        Path to save the figure as PDF. Pass None to skip saving.
+    output_path : str or Path or None
+        Base path for the saved figure. Any extension is ignored; one file
+        is written per entry in `formats`. Pass None to skip saving.
+    formats : tuple of str
+        File formats to save, e.g. ("pdf",), ("eps",) or ("pdf", "eps").
     show : bool
         Whether to call plt.show(). Set False when running headlessly.
 
@@ -502,28 +612,32 @@ def plot_te_carbon_marginal_gains(
     -------
     fig : matplotlib.figure.Figure
     """
-    import pickle
-    from pathlib import Path
-
     if sectors_to_plot is None:
         sectors_to_plot = ["Industrials", "Communication Services", "Financials"]
 
-    # Load latest period
-    last_pickle = sorted(Path(portfolio_dir).glob("optimal_portfolios_all_te_*.pkl"))[-1]
+    # Load latest period (sorted chronologically)
+    last_pickle = sorted(
+        Path(portfolio_dir).glob("optimal_portfolios_all_te_*.pkl"),
+        key=extract_period_key
+    )[-1]
     with open(last_pickle, "rb") as f:
         last_period = pickle.load(f)
 
+    # Styling without transparency, so PDF and EPS look identical
     plt.rcParams.update({
         "font.family": "serif",
         "font.size": 11,
         "axes.edgecolor": "black",
         "axes.linewidth": 1.0,
-        "grid.color": "gray",
+        "grid.color": "#C8C8C8",
         "grid.linestyle": "--",
-        "grid.alpha": 0.25,
+        "grid.linewidth": 1.0,
+        "ps.fonttype": 42,         # embed fonts as real text in EPS
+        "pdf.fonttype": 42,        # same for PDF
     })
 
-    fig, axes = plt.subplots(len(sectors_to_plot), 2, figsize=(11, 10))
+    # squeeze=False keeps axes 2-D, so a single sector also works
+    fig, axes = plt.subplots(len(sectors_to_plot), 2, figsize=(11, 10), squeeze=False)
 
     for row, sector in enumerate(sectors_to_plot):
         data = last_period[sector]
@@ -552,8 +666,13 @@ def plot_te_carbon_marginal_gains(
 
     plt.tight_layout(rect=[0, 0, 1, 0.97])
 
+    # Save one file per requested format
     if output_path is not None:
-        fig.savefig(output_path, bbox_inches="tight")
+        base = Path(output_path).with_suffix("")
+        for ext in formats:
+            out = base.with_suffix(f".{ext}")
+            fig.savefig(out, bbox_inches="tight", format=ext)
+            print(f"Figure saved to: {out}")
 
     if show:
         plt.show()

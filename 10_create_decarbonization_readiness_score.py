@@ -29,8 +29,6 @@ robust_df = pd.read_excel("results/robustness/robustness_scores_by_period.xlsx")
 robust_df = robust_df.rename(columns={"sector": "Sector", "period": "Period"})
 
 
-
-
 # =============================================================================
 # 2. AVERAGE ACROSS PERIODS (sector-level averages)
 # =============================================================================
@@ -66,9 +64,11 @@ robust_df["Period"] = robust_df["Period"].astype(str).str.zfill(4)
 
 period_order = sorted(room_df["Period"].unique())
 
-plot_all_dimension_evolution(room_df, flex_df, sens_df, robust_df, savepath="results/DRI/dri_dimension_evolution.pdf"
+plot_all_dimension_evolution(
+    room_df, flex_df, sens_df, robust_df,
+    savepath="results/DRI/dri_dimension_evolution",
+    formats=("pdf", "svg"),
 )
-
 
 # =============================================================================
 # 3. MERGE ALL DIMENSIONS
@@ -107,13 +107,9 @@ cols = [  "Sens_Avg",
     "Room_Avg",
     "Robust_Avg"]
 
-plot_sector_radar_grid(
-    df=final_df,
-    cols_to_norm=cols,
-    title="Decarbonization Readiness Index (DRI) — Radar Profiles across Sectors",
-    savepath="results/DRI/dri_radar_profiles.pdf"
-)
 
+
+plot_sector_radar_grid(final_df, cols_to_norm= cols, title="Decarbonization Readiness Index (DRI) — Radar Profiles across Sectors", savepath="results/sector_radar_grid", formats=("pdf", "svg"))
 
 # ---------------------------------------------------------
 # 6. CREATE RADAR DATA STRUCTURE FOR STREAMLIT
